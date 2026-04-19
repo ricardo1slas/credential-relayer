@@ -12,12 +12,13 @@ import (
 )
 
 type RouterDeps struct {
-	Logger       zerolog.Logger
-	RelayHandler *relay.Handler
-	APIKeyAuth   *auth.APIKeyAuth
-	Limiter      *ratelimit.Limiter
-	Queue        *queue.Queue
-	RedisClient  *redis.Client
+	Logger          zerolog.Logger
+	RelayHandler    *relay.Handler
+	APIKeyAuth      *auth.APIKeyAuth
+	Limiter         *ratelimit.Limiter
+	Queue           *queue.Queue
+	RedisClient     *redis.Client
+	MaxRequestBytes int64
 }
 
 func NewRouter(deps RouterDeps) chi.Router {
@@ -37,7 +38,7 @@ func NewRouter(deps RouterDeps) chi.Router {
 		r.Use(deps.APIKeyAuth.Middleware)
 		r.Use(deps.Limiter.Middleware)
 		r.Post("/relay", deps.RelayHandler.ServeHTTP)
-		r.Post("/webhook", webhookHandler(deps.Queue))
+		r.Post("/webhook", webhookHandler(deps.Queue, deps.MaxRequestBytes))
 		r.Get("/jobs/{id}", jobStatusHandler(deps.Queue))
 	})
 

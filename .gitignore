@@ -2,9 +2,14 @@
 .profile.md
 .env
 .env.*
+configs/config.yaml
 
 # Build output
 bin/
+relayer
+
+# Large installers (never belong in git)
+*.pkg
 
 # OS files
 .DS_Store
@@ -13,3 +18,7 @@ bin/
 .idea/
 .vscode/
 *.swp
+
+# Security scanner reports
+trivy-report.json
+gitleaks-report.json

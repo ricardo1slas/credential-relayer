@@ -2,22 +2,37 @@ server:
   port: 8080
   read_timeout: 10s
   write_timeout: 10s
+  read_header_timeout: 5s
 
 auth:
   api_keys:
     - name: "my-client"
-      key: "change-me-to-a-secure-key"
+      key: "replace-me-with-a-random-secret"
 
 rate_limit:
   requests: 100
   window: 60s
 
 relay:
+  # Inbound request body cap -- rejects anything larger with 413.
+  max_request_bytes: 1048576     # 1 MiB
+  # Target response body cap -- truncates anything larger.
+  max_response_bytes: 10485760   # 10 MiB
+  # Outbound User-Agent sent to targets (overrides whatever the client sent).
+  user_agent: "private-relayer/0.1"
+  # Max HTTP redirects to follow per request.
+  max_redirects: 3
+  # If false (default), the relay strips User-Agent, Referer, and hop-by-hop headers
+  # from the client before forwarding. Set true ONLY if a target requires the real UA.
+  preserve_client_identity: false
   targets:
     - name: "httpbin"
       url: "https://httpbin.org"
       timeout: 5s
       retries: 3
+      # allow_http: true           # permit http:// scheme (default: reject)
+      # allow_private_ips: true    # permit RFC1918/loopback/link-local (default: reject)
+      # preserve_user_agent: true  # per-target override for preserve_client_identity
 
 queue:
   redis:
@@ -26,6 +41,10 @@ queue:
     db: 0
   workers: 5
   retry_delay: 30s
+  # TTL for completed job metadata. Body is cleared on completion regardless.
+  completed_ttl: 1h
+  # TTL for failed/dead jobs (keeps body + headers for debugging).
+  failed_ttl: 24h
 
 metrics:
   enabled: true

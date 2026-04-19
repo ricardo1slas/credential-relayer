@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ricardo1slas/private_relayer/internal/auth"
+	"github.com/rs/zerolog"
 )
 
 type Config struct {
@@ -46,7 +48,6 @@ func (l *Limiter) getBucket(key string) *bucket {
 	})
 	b := val.(*bucket)
 	if loaded {
-		// Existing bucket -- just return it.
 		return b
 	}
 	return b
@@ -75,6 +76,43 @@ func (l *Limiter) allow(key string) (bool, time.Duration) {
 	// Calculate how long until one token is available.
 	retryAfter := time.Duration((1 - b.tokens) / b.rate * float64(time.Second))
 	return false, retryAfter
+}
+
+// StartEviction periodically removes buckets that haven't been touched in 10×window.
+// Without this, the sync.Map grows unboundedly as unique keys (API-key names or IPs)
+// show up -- a slow memory leak exploitable by an attacker rotating through IPs.
+func (l *Limiter) StartEviction(ctx context.Context, logger zerolog.Logger) {
+	sweep := l.cfg.Window * 2
+	if sweep < 30*time.Second {
+		sweep = 30 * time.Second
+	}
+	idleCutoff := l.cfg.Window * 10
+	ticker := time.NewTicker(sweep)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cutoff := time.Now().Add(-idleCutoff)
+			evicted := 0
+			l.buckets.Range(func(k, v any) bool {
+				b := v.(*bucket)
+				b.mu.Lock()
+				stale := b.lastFill.Before(cutoff)
+				b.mu.Unlock()
+				if stale {
+					l.buckets.Delete(k)
+					evicted++
+				}
+				return true
+			})
+			if evicted > 0 {
+				logger.Debug().Int("evicted", evicted).Msg("rate limit buckets evicted")
+			}
+		}
+	}
 }
 
 // Middleware returns an HTTP middleware that rate limits requests per API key.

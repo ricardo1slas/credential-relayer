@@ -35,26 +35,37 @@ type RateLimitConfig struct {
 }
 
 type RelayConfig struct {
-	Targets []TargetConfig `koanf:"targets"`
+	Targets                []TargetConfig `koanf:"targets"`
+	MaxRequestBytes        int64          `koanf:"max_request_bytes"`  // inbound body cap
+	MaxResponseBytes       int64          `koanf:"max_response_bytes"` // target response cap
+	PreserveClientIdentity bool           `koanf:"preserve_client_identity"`
+	UserAgent              string         `koanf:"user_agent"`
+	MaxRedirects           int            `koanf:"max_redirects"`
 }
 
 type TargetConfig struct {
-	Name    string        `koanf:"name"`
-	URL     string        `koanf:"url"`
-	Timeout time.Duration `koanf:"timeout"`
-	Retries int           `koanf:"retries"`
+	Name              string        `koanf:"name"`
+	URL               string        `koanf:"url"`
+	Timeout           time.Duration `koanf:"timeout"`
+	Retries           int           `koanf:"retries"`
+	AllowHTTP         bool          `koanf:"allow_http"`
+	AllowPrivateIPs   bool          `koanf:"allow_private_ips"`
+	PreserveUserAgent bool          `koanf:"preserve_user_agent"`
 }
 
 type ServerConfig struct {
-	Port         int           `koanf:"port"`
-	ReadTimeout  time.Duration `koanf:"read_timeout"`
-	WriteTimeout time.Duration `koanf:"write_timeout"`
+	Port              int           `koanf:"port"`
+	ReadTimeout       time.Duration `koanf:"read_timeout"`
+	WriteTimeout      time.Duration `koanf:"write_timeout"`
+	ReadHeaderTimeout time.Duration `koanf:"read_header_timeout"`
 }
 
 type QueueConfig struct {
-	Redis      RedisConfig   `koanf:"redis"`
-	Workers    int           `koanf:"workers"`
-	RetryDelay time.Duration `koanf:"retry_delay"`
+	Redis           RedisConfig   `koanf:"redis"`
+	Workers         int           `koanf:"workers"`
+	RetryDelay      time.Duration `koanf:"retry_delay"`
+	CompletedTTL    time.Duration `koanf:"completed_ttl"`
+	FailedTTL       time.Duration `koanf:"failed_ttl"`
 }
 
 type RedisConfig struct {
@@ -106,6 +117,9 @@ func setDefaults(cfg *Config) {
 	if cfg.Server.WriteTimeout == 0 {
 		cfg.Server.WriteTimeout = 10 * time.Second
 	}
+	if cfg.Server.ReadHeaderTimeout == 0 {
+		cfg.Server.ReadHeaderTimeout = 5 * time.Second
+	}
 	if cfg.Queue.Redis.Addr == "" {
 		cfg.Queue.Redis.Addr = "localhost:6379"
 	}
@@ -118,10 +132,28 @@ func setDefaults(cfg *Config) {
 	if cfg.Queue.RetryDelay == 0 {
 		cfg.Queue.RetryDelay = 30 * time.Second
 	}
+	if cfg.Queue.CompletedTTL == 0 {
+		cfg.Queue.CompletedTTL = time.Hour
+	}
+	if cfg.Queue.FailedTTL == 0 {
+		cfg.Queue.FailedTTL = 24 * time.Hour
+	}
 	if cfg.RateLimit.Requests == 0 {
 		cfg.RateLimit.Requests = 100
 	}
 	if cfg.RateLimit.Window == 0 {
 		cfg.RateLimit.Window = time.Minute
+	}
+	if cfg.Relay.MaxRequestBytes == 0 {
+		cfg.Relay.MaxRequestBytes = 1 << 20 // 1 MiB
+	}
+	if cfg.Relay.MaxResponseBytes == 0 {
+		cfg.Relay.MaxResponseBytes = 10 << 20 // 10 MiB
+	}
+	if cfg.Relay.UserAgent == "" {
+		cfg.Relay.UserAgent = "private-relayer/0.1"
+	}
+	if cfg.Relay.MaxRedirects == 0 {
+		cfg.Relay.MaxRedirects = 3
 	}
 }

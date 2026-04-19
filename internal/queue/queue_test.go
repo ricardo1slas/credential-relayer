@@ -40,7 +40,7 @@ func testRedisClient(t *testing.T) *redis.Client {
 func TestEnqueueDequeue(t *testing.T) {
 	client := testRedisClient(t)
 	logger := zerolog.Nop()
-	q := NewQueue(client, logger)
+	q := NewQueue(client, Config{}, logger)
 
 	ctx := context.Background()
 
@@ -92,7 +92,7 @@ func TestEnqueueDequeue(t *testing.T) {
 func TestGetJob(t *testing.T) {
 	client := testRedisClient(t)
 	logger := zerolog.Nop()
-	q := NewQueue(client, logger)
+	q := NewQueue(client, Config{}, logger)
 	ctx := context.Background()
 
 	job, err := q.Enqueue(ctx, "svc", "GET", "/", nil, nil, 1)
@@ -112,7 +112,7 @@ func TestGetJob(t *testing.T) {
 func TestGetJobNotFound(t *testing.T) {
 	client := testRedisClient(t)
 	logger := zerolog.Nop()
-	q := NewQueue(client, logger)
+	q := NewQueue(client, Config{}, logger)
 	ctx := context.Background()
 
 	_, err := q.GetJob(ctx, "nonexistent-id")
@@ -124,7 +124,7 @@ func TestGetJobNotFound(t *testing.T) {
 func TestUpdateJob(t *testing.T) {
 	client := testRedisClient(t)
 	logger := zerolog.Nop()
-	q := NewQueue(client, logger)
+	q := NewQueue(client, Config{}, logger)
 	ctx := context.Background()
 
 	job, _ := q.Enqueue(ctx, "svc", "POST", "/", nil, nil, 3)
@@ -147,7 +147,7 @@ func TestUpdateJob(t *testing.T) {
 func TestSendToDeadLetter(t *testing.T) {
 	client := testRedisClient(t)
 	logger := zerolog.Nop()
-	q := NewQueue(client, logger)
+	q := NewQueue(client, Config{}, logger)
 	ctx := context.Background()
 
 	job, _ := q.Enqueue(ctx, "svc", "POST", "/", nil, nil, 1)
@@ -171,7 +171,7 @@ func TestSendToDeadLetter(t *testing.T) {
 func TestRequeue(t *testing.T) {
 	client := testRedisClient(t)
 	logger := zerolog.Nop()
-	q := NewQueue(client, logger)
+	q := NewQueue(client, Config{}, logger)
 	ctx := context.Background()
 
 	job, _ := q.Enqueue(ctx, "svc", "POST", "/", nil, nil, 3)

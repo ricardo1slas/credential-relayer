@@ -6,6 +6,7 @@ import (
 	"net/http"
 )
 
+// #nosec G101 -- this is the header *name*, not a credential value.
 const headerAPIKey = "X-API-Key"
 
 type KeyConfig struct {

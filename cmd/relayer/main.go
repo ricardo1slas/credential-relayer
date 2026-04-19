@@ -35,16 +35,22 @@ func main() {
 		Int("port", cfg.Server.Port).
 		Dur("read_timeout", cfg.Server.ReadTimeout).
 		Dur("write_timeout", cfg.Server.WriteTimeout).
+		Int64("max_request_bytes", cfg.Relay.MaxRequestBytes).
+		Int64("max_response_bytes", cfg.Relay.MaxResponseBytes).
+		Bool("preserve_client_identity", cfg.Relay.PreserveClientIdentity).
 		Msg("starting relayer")
 
 	// Build target registry from config.
 	relayTargets := make([]relay.TargetConfig, len(cfg.Relay.Targets))
 	for i, t := range cfg.Relay.Targets {
 		relayTargets[i] = relay.TargetConfig{
-			Name:    t.Name,
-			URL:     t.URL,
-			Timeout: t.Timeout,
-			Retries: t.Retries,
+			Name:              t.Name,
+			URL:               t.URL,
+			Timeout:           t.Timeout,
+			Retries:           t.Retries,
+			AllowHTTP:         t.AllowHTTP,
+			AllowPrivateIPs:   t.AllowPrivateIPs,
+			PreserveUserAgent: t.PreserveUserAgent,
 		}
 	}
 
@@ -77,8 +83,17 @@ func main() {
 	}
 
 	// Build queue and worker pool.
-	jobQueue := queue.NewQueue(redisClient, logger)
-	relayHandler := relay.NewHandler(registry, logger)
+	jobQueue := queue.NewQueue(redisClient, queue.Config{
+		CompletedTTL: cfg.Queue.CompletedTTL,
+		FailedTTL:    cfg.Queue.FailedTTL,
+	}, logger)
+	relayHandler := relay.NewHandler(registry, relay.HandlerConfig{
+		MaxRequestBytes:        cfg.Relay.MaxRequestBytes,
+		MaxResponseBytes:       cfg.Relay.MaxResponseBytes,
+		PreserveClientIdentity: cfg.Relay.PreserveClientIdentity,
+		UserAgent:              cfg.Relay.UserAgent,
+		MaxRedirects:           cfg.Relay.MaxRedirects,
+	}, logger)
 
 	workerCfg := queue.WorkerPoolConfig{
 		Workers:    cfg.Queue.Workers,
@@ -87,26 +102,29 @@ func main() {
 	workerPool := queue.NewWorkerPool(jobQueue, relayHandler, workerCfg, logger)
 
 	router := api.NewRouter(api.RouterDeps{
-		Logger:       logger,
-		RelayHandler: relayHandler,
-		APIKeyAuth:   apiKeyAuth,
-		Limiter:      limiter,
-		Queue:        jobQueue,
-		RedisClient:  redisClient,
+		Logger:          logger,
+		RelayHandler:    relayHandler,
+		APIKeyAuth:      apiKeyAuth,
+		Limiter:         limiter,
+		Queue:           jobQueue,
+		RedisClient:     redisClient,
+		MaxRequestBytes: cfg.Relay.MaxRequestBytes,
 	})
 
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Server.Port),
-		Handler:      router,
-		ReadTimeout:  cfg.Server.ReadTimeout,
-		WriteTimeout: cfg.Server.WriteTimeout,
-		IdleTimeout:  60 * time.Second,
+		Addr:              fmt.Sprintf(":%d", cfg.Server.Port),
+		Handler:           router,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
+		IdleTimeout:       60 * time.Second,
 	}
 
-	// Start worker pool in background.
+	// Start worker pool + rate-limit sweeper in background.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go workerPool.Start(ctx)
+	go limiter.StartEviction(ctx, logger)
 
 	// Graceful shutdown on SIGINT/SIGTERM.
 	go func() {

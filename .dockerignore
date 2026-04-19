@@ -1,0 +1,35 @@
+# Version control
+.git
+.gitignore
+.gitattributes
+.github
+
+# Local build output
+bin/
+relayer
+
+# Large artifacts accidentally committed
+AWSCLIV2.pkg
+
+# Docs and project notes
+*.md
+private/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Local env
+.env
+.env.*
+
+# Infra that isn't part of the image
+infra/terraform
+scripts
+
+# Tests and tooling config (not needed in the image)
+**/*_test.go
+.golangci.yml
+Makefile

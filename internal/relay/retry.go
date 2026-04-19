@@ -19,6 +19,7 @@ func backoff(attempt int) time.Duration {
 		delay = float64(maxDelay)
 	}
 	// Add jitter: random value between 50% and 100% of the delay.
+	// #nosec G404 -- jitter is timing variance, not a security boundary; CSPRNG overhead unwarranted.
 	jitter := 0.5 + rand.Float64()*0.5
 	return time.Duration(delay * jitter)
 }

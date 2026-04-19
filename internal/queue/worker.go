@@ -101,10 +101,7 @@ func (wp *WorkerPool) processJob(ctx context.Context, job *Job, logger zerolog.L
 		return
 	}
 
-	job.Status = StatusCompleted
-	job.ResponseCode = resp.StatusCode
-	job.Error = ""
-	_ = wp.queue.UpdateJob(ctx, job)
+	_ = wp.queue.MarkCompleted(ctx, job, resp.StatusCode)
 	_ = resp.Body.Close()
 
 	logger.Info().Int("status", resp.StatusCode).Msg("job completed")

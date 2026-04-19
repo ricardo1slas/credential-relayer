@@ -1,0 +1,61 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: relayer-redis
+    restart: unless-stopped
+    # Run as the redis user directly so the entrypoint doesn't need CAP_SETUID to drop privs.
+    user: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    pids_limit: 200
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  relayer:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    image: private-relayer:local
+    container_name: relayer
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      RELAYER_QUEUE_REDIS_ADDR: redis:6379
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../../configs/config.yaml:/app/configs/config.yaml:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    pids_limit: 200
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  redis-data:

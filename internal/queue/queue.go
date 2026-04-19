@@ -14,18 +14,41 @@ const (
 	queueKey      = "relayer:jobs:pending"
 	deadLetterKey = "relayer:jobs:dead"
 	jobPrefix     = "relayer:job:"
+
+	defaultCompletedTTL = time.Hour
+	defaultFailedTTL    = 24 * time.Hour
 )
 
 type Queue struct {
-	client *redis.Client
-	logger zerolog.Logger
+	client       *redis.Client
+	logger       zerolog.Logger
+	completedTTL time.Duration
+	failedTTL    time.Duration
 }
 
-func NewQueue(client *redis.Client, logger zerolog.Logger) *Queue {
-	return &Queue{client: client, logger: logger}
+type Config struct {
+	CompletedTTL time.Duration
+	FailedTTL    time.Duration
+}
+
+func NewQueue(client *redis.Client, cfg Config, logger zerolog.Logger) *Queue {
+	if cfg.CompletedTTL == 0 {
+		cfg.CompletedTTL = defaultCompletedTTL
+	}
+	if cfg.FailedTTL == 0 {
+		cfg.FailedTTL = defaultFailedTTL
+	}
+	return &Queue{
+		client:       client,
+		logger:       logger,
+		completedTTL: cfg.CompletedTTL,
+		failedTTL:    cfg.FailedTTL,
+	}
 }
 
 // Enqueue creates a new job and pushes it to the pending queue.
+// Callers are expected to have already scrubbed sensitive headers; see
+// relay.StripSensitiveHeaders and webhook.go.
 func (q *Queue) Enqueue(ctx context.Context, target, method, path string, headers map[string]string, body []byte, maxRetries int) (*Job, error) {
 	job := &Job{
 		ID:         uuid.New().String(),
@@ -46,7 +69,7 @@ func (q *Queue) Enqueue(ctx context.Context, target, method, path string, header
 	}
 
 	pipe := q.client.Pipeline()
-	pipe.Set(ctx, jobPrefix+job.ID, data, 24*time.Hour)
+	pipe.Set(ctx, jobPrefix+job.ID, data, q.failedTTL)
 	pipe.LPush(ctx, queueKey, job.ID)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return nil, fmt.Errorf("enqueueing job: %w", err)
@@ -79,17 +102,37 @@ func (q *Queue) GetJob(ctx context.Context, id string) (*Job, error) {
 	return UnmarshalJob(data)
 }
 
-// UpdateJob persists the current job state.
+// UpdateJob persists the current job state with the long (failed_ttl) TTL.
+// Use MarkCompleted for successful jobs -- it clears the body and applies the shorter TTL.
 func (q *Queue) UpdateJob(ctx context.Context, job *Job) error {
 	job.UpdatedAt = time.Now()
 	data, err := job.Marshal()
 	if err != nil {
 		return fmt.Errorf("marshaling job: %w", err)
 	}
-	return q.client.Set(ctx, jobPrefix+job.ID, data, 24*time.Hour).Err()
+	return q.client.Set(ctx, jobPrefix+job.ID, data, q.failedTTL).Err()
 }
 
-// SendToDeadLetter moves a job to the dead-letter queue.
+// MarkCompleted finalizes a successful job: clears the request body and headers
+// (they served their purpose and shouldn't linger in Redis), sets status, and applies
+// the shorter completed_ttl so metadata is still pollable by clients for a while.
+func (q *Queue) MarkCompleted(ctx context.Context, job *Job, responseCode int) error {
+	job.Status = StatusCompleted
+	job.ResponseCode = responseCode
+	job.Error = ""
+	job.Body = nil
+	job.Headers = nil
+	job.UpdatedAt = time.Now()
+
+	data, err := job.Marshal()
+	if err != nil {
+		return fmt.Errorf("marshaling job: %w", err)
+	}
+	return q.client.Set(ctx, jobPrefix+job.ID, data, q.completedTTL).Err()
+}
+
+// SendToDeadLetter moves a job to the dead-letter queue. Body is preserved for debugging,
+// under the failed_ttl (longer) so operators have time to investigate.
 func (q *Queue) SendToDeadLetter(ctx context.Context, job *Job) error {
 	job.Status = StatusDead
 	job.UpdatedAt = time.Now()

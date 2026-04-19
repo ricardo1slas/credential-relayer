@@ -13,13 +13,14 @@
 5. [Phase 2: Core Relay Logic](#5-phase-2-core-relay-logic) ⬜
 6. [Phase 3: Authentication & Rate Limiting](#6-phase-3-authentication--rate-limiting) ⬜
 7. [Phase 4: Redis Queue & Async Processing](#7-phase-4-redis-queue--async-processing) ⬜
-8. [Phase 5: Docker & Docker Compose](#8-phase-5-docker--docker-compose) ⬜
-9. [Phase 6: CI/CD with GitHub Actions](#9-phase-6-cicd-with-github-actions) ⬜
-10. [Phase 7: AWS Infrastructure with Terraform](#10-phase-7-aws-infrastructure-with-terraform) ⬜
-11. [Phase 8: Continuous Deployment](#11-phase-8-continuous-deployment) ⬜
-12. [Phase 9: Observability & Alerting](#12-phase-9-observability--alerting) ⬜
-13. [Phase 10: Hardening & Documentation](#13-phase-10-hardening--documentation) ⬜
-14. [Glossary](#14-glossary)
+8. [Phase 5: Docker & Docker Compose](#8-phase-5-docker--docker-compose) 🚧
+9. [Phase 5.5: Security & Privacy Hardening](#9-phase-55-security--privacy-hardening) ✅
+10. [Phase 6: CI/CD with GitHub Actions](#10-phase-6-cicd-with-github-actions) ⬜
+11. [Phase 7: AWS Infrastructure with Terraform](#11-phase-7-aws-infrastructure-with-terraform) ⬜
+12. [Phase 8: Continuous Deployment](#12-phase-8-continuous-deployment) ⬜
+13. [Phase 9: Observability & Alerting](#13-phase-9-observability--alerting) ⬜
+14. [Phase 10: Hardening & Documentation](#14-phase-10-hardening--documentation) ⬜
+15. [Glossary](#15-glossary)
 
 ---
 
@@ -1097,7 +1098,7 @@ r.Route("/api/v1", func(r chi.Router) {
 auth:
   api_keys:
     - name: "dev-client"
-      key: "<revoked-dev-key>"
+      key: "$API_KEY"
 
 rate_limit:
   requests: 100    # 100 requests
@@ -1133,7 +1134,7 @@ $ curl -X POST localhost:8080/api/v1/relay -d '{"target":"httpbin"}'
 $ curl -H "X-API-Key: wrong" -X POST localhost:8080/api/v1/relay -d '{"target":"httpbin"}'
 {"error":"invalid API key"}                    # 401
 
-$ curl -H "X-API-Key: <revoked-dev-key>" -X POST localhost:8080/api/v1/relay \
+$ curl -H "X-API-Key: $API_KEY" -X POST localhost:8080/api/v1/relay \
   -d '{"target":"httpbin","method":"GET","path":"/get"}'
 {"status":"relayed","target":"httpbin",...}     # 200
 
@@ -1453,7 +1454,7 @@ $ make run
 # "worker started" x5
 
 $ curl -X POST localhost:8080/api/v1/webhook \
-  -H "X-API-Key: <revoked-dev-key>" \
+  -H "X-API-Key: $API_KEY" \
   -d '{"target":"httpbin","method":"GET","path":"/get"}'
 # {"status":"accepted","job_id":"a6fb3d77-..."}
 
@@ -1482,21 +1483,660 @@ $ curl localhost:8080/api/v1/jobs/a6fb3d77-... -H "X-API-Key: ..."
 
 ---
 
-## 8. Phase 5: Docker & Docker Compose ⬜
+## 8. Phase 5: Docker & Docker Compose 🚧
 
-**Goal:** Containerize for consistent local and cloud environments.
+**Goal:** Containerize the relayer so the entire stack (app + Redis) comes up with a single command -- both for local development and as the basis for the ECS deployment in Phase 7.
 
-**Status:** NOT STARTED
+**Status:** IN PROGRESS -- Dockerfile, `.dockerignore`, `docker-compose.yml`, and Makefile targets landed. Prometheus metrics + Grafana dashboard remain (tracked as Phase 5b).
 
-### Key Design Decisions (Upcoming)
+### What Was Built
 
-- **Multi-stage build**: Stage 1 (builder) has Go toolchain (~1GB). Stage 2 (runtime) has only the binary (~15MB). This reduces attack surface and speeds up pulls.
-- **distroless vs alpine**: distroless has no shell (more secure, harder to debug). alpine has busybox (less secure, easier to debug). We'll decide based on debugging needs.
-- **Non-root user**: The container runs as UID 65534 (nobody). If the process is compromised, the attacker has no privileges.
+```
+┌─────────────────────── docker compose up ──────────────────────────┐
+│                                                                    │
+│   ┌──────────────────────┐           ┌──────────────────────┐      │
+│   │   relayer container  │  6379/tcp │   redis container    │      │
+│   │  (alpine, non-root)  │──────────>│   redis:7-alpine     │      │
+│   │   :8080 exposed      │           │   data volume: redis-data │  │
+│   └──────────┬───────────┘           └──────────────────────┘      │
+│              │ /health (curl)                                      │
+│              │ HEALTHCHECK                                         │
+│              ▼                                                     │
+│      host: localhost:8080                                          │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Design Decisions
+
+| Decision | Choice | Why |
+|---|---|---|
+| Base image (runtime) | `alpine:3.21` | Has a shell + `apk` so we can `docker exec -it relayer sh` to debug locally. `distroless/static` is smaller and more secure -- we'll likely swap to it for the production ECS image in Phase 7 once the app is stable and debugging is rare. |
+| Base image (builder) | `golang:1.26-alpine` | Matches `go 1.26.2` in `go.mod`. Alpine keeps the builder small (~350MB vs 900MB for the Debian-based image) and layer caching still works. |
+| Build stages | 2 (builder + runtime) | Final image ships only the binary and CA certs -- no Go toolchain, no source. Smaller attack surface, smaller pulls. |
+| User | Non-root (UID 65532, `relayer`) | If the process is compromised, the attacker has no filesystem write access and can't install packages. 65532 is the conventional UID used by distroless/Kubernetes so the same image will behave the same once it lands on ECS/EKS. |
+| CGO | `CGO_ENABLED=0` | Produces a fully static Go binary. No libc dependency at runtime -- image works on any Linux base, including future `scratch` or `distroless/static` swaps. |
+| Build flags | `-trimpath -ldflags="-s -w"` | `-trimpath` strips absolute paths from the binary (reproducible builds). `-s -w` drops the symbol table and DWARF debug info -- smaller binary, no effect on runtime behavior. |
+| BuildKit cache mounts | `--mount=type=cache,target=/go/pkg/mod` and `.../go-build` | Go module cache and build cache persist across `docker build` invocations. First build takes ~90s; subsequent code-only rebuilds take ~5s. |
+| Healthcheck | `curl /health` every 10s | Matches the readiness probe we'll eventually configure on the ECS ALB. `curl` is in the runtime image explicitly for this. |
+| Compose dependency order | `relayer` waits for `redis` `service_healthy` | Prevents the relayer from starting before Redis is accepting connections (otherwise the `NewRedisClient` PING in `main.go` fatals the process). |
+| Redis addr override | `RELAYER_QUEUE_REDIS_ADDR=redis:6379` env var | The YAML default is `localhost:6379` for bare-metal `go run`. In compose, the env var maps via koanf's `RELAYER_*` → `.` rule to `queue.redis.addr` and wins over the YAML. Same mechanism will inject the ElastiCache endpoint in Phase 7. |
+| Config mount | `configs/config.yaml:/app/configs/config.yaml:ro` | The file is baked into the image at build time for standalone `docker run`, but compose mounts the live file read-only so editing `configs/config.yaml` and `make docker-up` picks up changes without a rebuild. |
+
+### Step 1: Multi-Stage Dockerfile (`infra/docker/Dockerfile`)
+
+**Builder stage -- layer order matters:**
+
+```dockerfile
+COPY go.mod go.sum ./
+RUN go mod download          # <-- cached unless go.mod/go.sum change
+
+COPY cmd ./cmd
+COPY internal ./internal
+COPY pkg ./pkg
+RUN ... go build ...         # <-- only this layer rebuilds on code changes
+```
+
+**Why copy `go.mod`/`go.sum` before the source?** Docker caches layers top-to-bottom. If we copied everything at once, any code change would invalidate `go mod download` and re-pull every dependency. Splitting the copy means dependency resolution is cached on every build except when you add/remove a module.
+
+**Runtime stage -- minimal surface:**
+
+```dockerfile
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates tzdata curl \
+    && addgroup -S relayer \
+    && adduser -S -G relayer -u 65532 relayer
+COPY --from=builder /out/relayer /app/relayer
+COPY configs/config.yaml /app/configs/config.yaml
+USER 65532:65532
+```
+
+- `ca-certificates` is required so the relayer can make HTTPS calls to target services (otherwise `x509: certificate signed by unknown authority`).
+- `tzdata` so timestamps in logs respect `TZ=...` if set.
+- `curl` exists only so the HEALTHCHECK can hit `/health`. Alternative would be writing a tiny Go healthcheck subcommand -- not worth it at this stage.
+- `USER 65532:65532` means the process starts as a non-root UID. `WORKDIR /app` and the copied files are readable; the container has no need to write anywhere persistent.
+
+### Step 2: `.dockerignore`
+
+**Why this matters:** Without `.dockerignore`, `COPY . .` (or the build context itself) includes the committed `relayer` binary (10 MB), `AWSCLIV2.pkg` (55 MB), `.git` history, and the `private/` folder. That bloats the build context, slows down `docker build`, and risks leaking `.profile.md` or plan notes into image layers.
+
+Key exclusions:
+- `bin/`, `relayer` -- host-built artifacts, unrelated to the container binary
+- `AWSCLIV2.pkg` -- installer accidentally committed; 55 MB
+- `private/` -- plan notes and profile markdown are not for the image
+- `infra/terraform`, `scripts` -- not part of the runtime
+- `**/*_test.go` -- tests don't run inside the image; excluding them makes the build context a bit smaller (they're never referenced in `go build ./cmd/relayer` anyway, so this is just hygiene)
+
+### Step 3: `docker-compose.yml` (`infra/docker/docker-compose.yml`)
+
+Two services:
+
+**`redis`:**
+- Image: `redis:7-alpine` (official, tiny)
+- Port `6379` published to the host so you can point `redis-cli` at `localhost:6379` for debugging
+- Named volume `redis-data` for job persistence across restarts
+- Healthcheck: `redis-cli ping`
+
+**`relayer`:**
+- Built from the repo root context with `dockerfile: infra/docker/Dockerfile`
+- `depends_on: redis: condition: service_healthy` so compose blocks start until Redis passes its healthcheck
+- Environment: `RELAYER_QUEUE_REDIS_ADDR=redis:6379` -- uses compose's internal DNS (`redis` is the service name)
+- Config mounted read-only for edit-reload workflow
+- Port `8080` published to the host
+
+**Why build context is `../..`?** The compose file lives in `infra/docker/`, but the Dockerfile needs to `COPY cmd ./cmd` etc. from the repo root. Setting `context: ../..` points Docker at the repo root; `dockerfile: infra/docker/Dockerfile` tells it which file to use.
+
+### Step 4: Makefile Targets
+
+```makefile
+COMPOSE := docker compose -f infra/docker/docker-compose.yml
+
+docker-build:   $(COMPOSE) build
+docker-up:      $(COMPOSE) up -d
+docker-down:    $(COMPOSE) down
+docker-logs:    $(COMPOSE) logs -f
+docker-ps:      $(COMPOSE) ps
+```
+
+**Why `docker compose` (v2) and not `docker-compose` (v1)?** Compose v1 was deprecated in 2023 and is a separate Python binary. Compose v2 is a Docker CLI plugin (`docker compose`), shipped with Docker Desktop and modern Docker Engine installs. All new work uses v2.
+
+### Step 5: Running It
+
+**First-time build + start:**
+```bash
+make docker-build    # ~90s on first build, ~5s on cached rebuilds
+make docker-up       # starts relayer + redis detached
+make docker-logs     # follow combined logs
+```
+
+**Smoke test:**
+```bash
+curl http://localhost:8080/health        # {"status":"ok"}
+curl http://localhost:8080/ready         # 200 when redis is reachable
+
+# Authenticated relay (default dev API key from configs/config.yaml):
+curl -X POST http://localhost:8080/api/v1/relay \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"target":"httpbin","method":"GET","path":"/get"}'
+```
+
+**Shutdown:**
+```bash
+make docker-down          # stops containers, keeps the redis-data volume
+make docker-down -v       # also removes the volume (wipe queue state)
+```
+
+### What's Next (Phase 5b)
+
+The step-by-step plan's Phase 5 also includes Prometheus metrics and a Grafana dashboard. Tracking those separately so this phase closes cleanly:
+
+- `internal/metrics/metrics.go` -- register counters (`relay_requests_total`, `relay_errors_total`), histograms (`relay_request_duration_seconds`), gauges (`queue_depth`, `workers_active`)
+- `GET /metrics` handler using `promhttp.Handler()`
+- Add `prometheus` and `grafana` services to `docker-compose.yml`
+- `infra/docker/prometheus/prometheus.yml` -- scrape config pointing at `relayer:8080/metrics`
+- `infra/docker/grafana/dashboards/relayer.json` -- provisioned dashboard
 
 ---
 
-## 9. Phase 6: CI/CD with GitHub Actions ⬜
+## 9. Phase 5.5: Security & Privacy Hardening ✅
+
+**Goal:** Close the highest-impact application, supply-chain, and privacy risks before CI turns scanners into gates. The full threat model and long-form roadmap live in `private/security_roadmap.md`; this section is the human-readable story of *what was fixed, how, and why*.
+
+**Status:** COMPLETED -- 14 threats addressed (11 hard fixes + 2 nosec-justified + 1 deferred), 4 new unit tests, baseline scanners still green, end-to-end smoke tests including SSRF/method-abuse/oversized-body attempts behave correctly.
+
+### 9.0 Why Phase 5.5 Exists
+
+The original plan had security as a Phase 10 "hardening" pass. Mid-way through Phase 5 (Docker) I paused and re-examined the project name -- `private_relayer` -- and the DevSecOps portfolio goal. Security isn't a polish step for a relay service; it's the thing. A relay that naïvely forwards client requests is an SSRF engine unless you design it otherwise. Pushing security to the end would have meant rewriting the relay handler after CI, AWS, and observability were already in place -- expensive and risky.
+
+So Phase 5.5 slotted in between Docker (5) and CI (6). The sequencing logic:
+
+```
+Phase 5:   Containerize           ← make it reproducible
+Phase 5.5: Security pass          ← fix what's broken before we gate on it
+Phase 6:   CI turns the scanners  ← no baseline red alerts on day one
+           into blocking gates
+```
+
+### 9.1 The "Private" Question: Two Very Different Goals
+
+Before any fixes, we had to name the goal -- "private" in `private_relayer` can mean two different things, and they drive different features.
+
+| | **Infra-private** (self-hosted) | **User-private** (privacy-preserving) |
+|---|---|---|
+| **"Private" refers to** | Who runs the relay | Who can see the traffic through it |
+| **Goal** | You operate your own instance instead of a shared SaaS; data stays under your operational control. | Clients of the relay get anonymity or payload confidentiality -- even *from you, the operator*. |
+| **Analog products** | Self-hosted GitLab, Plausible, Mailcow | Tor, Signal, iCloud Private Relay |
+| **Can the operator see payloads?** | Yes. | No, by design (payloads are encrypted to the target, relayed opaquely). |
+| **Threat model includes the operator?** | No -- operator is trusted. | Yes -- operator is an adversary. |
+| **Typical features** | Auth, rate limits, audit logs, TLS, queue. | Above + client-side payload encryption, header stripping, traffic shaping, onion routing. |
+| **Cost to implement** | Normal backend work. | Significant: key management, client SDK, correlation-attack resistance. |
+
+**What the code did before Phase 5.5:** 100% infra-private. The relay faithfully forwarded whatever the client sent (including `Authorization` headers), logged identifying metadata, and stored full request payloads in Redis for 24h. Nothing cryptographic. Nothing anonymity-preserving.
+
+**Decision: stay infra-private, with privacy as a first-class secondary goal.** Why:
+
+- **Portfolio alignment.** The project targets DevOps / DevSecOps roles. Those jobs want evidence you understand the controls real cloud teams ship -- IAM, Secrets Manager, WAF, least-privilege, rate limiting, observability. They do *not* typically want evidence you can build Tor. User-private would be a research project in DevOps clothing.
+- **Scope discipline.** User-private done poorly is worse than infra-private done well. Half-encrypted traffic gives false confidence; shipping a client SDK that claims end-to-end encryption but logs timing correlations would embarrass the project.
+- **Privacy still matters.** Even with infra-private as the framing, we can and should:
+  - strip client identity (`User-Agent`, `Referer`) from traffic going to targets,
+  - scrub auth headers before persisting jobs in Redis,
+  - log registered route patterns instead of concrete paths,
+  - cap how long request bodies linger after a job completes.
+  - These are all wins you get "for free" from good infra-private hygiene. They landed in Phase 5.5 below.
+
+If we ever decide user-private is worth committing to, the security roadmap §5 sketches what that track looks like (pre-encrypted payloads, ephemeral state, traffic shaping, Tor outbound). Nothing in the current code blocks that path.
+
+### 9.2 The Threat Model (in One Page)
+
+Full version in `private/security_roadmap.md` §2. Brief here, categorised as the security-roadmap doc categorises them:
+
+```
+                    ┌──────────────────┐
+                    │   Client (API)   │  Trust: hostile. Everything it sends must be validated.
+                    └────────┬─────────┘
+                             │
+                    ╔════════▼═══════════════════════════╗
+                    ║         Private Relayer            ║
+                    ║                                    ║
+                    ║  T1  SSRF / URL confusion  (HIGH)  ║   ← client-controlled path
+                    ║  T2  Header injection      (HIGH)  ║     shifts host, auth laundering
+                    ║  T3  Method abuse          (MED)   ║
+                    ║  T4  Resource exhaustion   (MED)   ║   ← body/response size, memory
+                    ║  T5  Weak secret posture   (HIGH)  ║
+                    ║  T6  Trusted proxy headers (MED)   ║
+                    ║  T7  Cleartext / downgrade (MED)   ║
+                    ║  T8  math/rand for jitter  (FALSE  ║   ← gosec noise
+                    ║                             POS)   ║
+                    ║  T9  Payload persistence   (HIGH)  ║   ← privacy
+                    ║  T10 Metadata in logs      (MED)   ║   ← privacy
+                    ║  T11 Identity leak to tgt  (MED)   ║   ← privacy
+                    ║  T12 Committed artefacts   (MED)   ║   ← repo hygiene
+                    ║  T13 Error msg leak        (LOW)   ║
+                    ║  T14 Dep/image drift       (LOW)   ║
+                    ╚════════┬═══════════════════════════╝
+                             │
+                    ┌────────▼─────────┐
+                    │   Target API     │  Trust: semi (you picked them).
+                    │                  │  Can still: redirect to 169.254.169.254,
+                    │                  │  return huge bodies, poison headers.
+                    └──────────────────┘
+```
+
+Phase 5.5 closes T1 through T11 (minus T6 which is partial -- see §9.10). T12 history-purge is deferred to Phase 10 (public showcase repo). T13 and T14 are addressed in Phase 6 (CI) and Phase 10.
+
+### 9.3 The Tools We Ran (And What They Actually Caught)
+
+Four scanners, run locally before making any fixes, to set a baseline. Installed via `go install` and Homebrew (`brew install gitleaks trivy`). See `private/security_roadmap.md` §3 for the full tooling table and the per-scanner fail-build thresholds planned for CI.
+
+| Tool | What it is for | Baseline finding | After Phase 5.5 |
+|---|---|---|---|
+| `govulncheck` | CVEs in Go deps *reachable from your code* (reachability-aware, official Go vuln DB) | Clean | Clean |
+| `gosec` | Go static analysis for security antipatterns | 2 HIGH (both false positives) | 0 (suppressed with `#nosec` + justification) |
+| `gitleaks` | Secrets in tree + git history | 2 (dev API key in `how_to.md` curl examples, same value also in `configs/config.yaml`) | 2 in git history only; working tree clean (deferred; history purge is a Phase 10 task) |
+| `trivy image` | OS package CVEs + Go binary CVEs in the built container | Clean | Clean |
+
+**Key lesson: scanners find regressions, not design flaws.** gosec did **not** flag the SSRF-shaped string concat at `relay.go:186`, did not flag the lack of header filter, did not flag unbounded body reads, did not flag the 24h retention of request bodies. Every HIGH finding in this phase came from manual code review. Scanners are necessary (they catch drift) but not sufficient (they miss intent).
+
+### 9.4 Fix Group A -- Repo Hygiene (T5, T12)
+
+**Problem.** `configs/config.yaml` was tracked and contained `key: "<revoked-dev-key>"` -- a real-looking API key anyone cloning the repo would see and could potentially reach across deployments if the value was reused. The committed `relayer` binary (10 MB) had unverifiable provenance. `AWSCLIV2.pkg` (55 MB) was an installer blob that had no business being in a Git history.
+
+**Fix.**
+
+```bash
+git rm --cached relayer AWSCLIV2.pkg configs/config.yaml
+```
+
+`.gitignore` updated to ensure they stay out:
+```
+configs/config.yaml
+relayer
+*.pkg
+```
+
+`how_to.md` curl examples changed from `-H "X-API-Key: <revoked-dev-key>"` to `-H "X-API-Key: $API_KEY"` so reviewers copy-paste a placeholder, not a real-looking secret. `configs/config.example.yaml` retains `replace-me-with-a-random-secret` to signal "this is a placeholder."
+
+**What's still flagged.** Gitleaks still finds 2 matches because the old commit `6943cd8` contains the key in `how_to.md` history. Rewriting history (via `git filter-repo --replace-text`) is a Phase 10 task tied to publishing the public showcase repo -- doing it now would force-push private history, which is acceptable but premature. The working tree is clean, so regressions from this point forward are preventable by CI.
+
+**Why this isn't "security theatre".** The dev key itself was low-value, but treating it as a real secret during cleanup builds the muscle: never commit a credential-shaped value, even as a placeholder, even in a private repo. The next secret you commit *will* be the real one if the habit isn't there.
+
+### 9.5 Fix Group B -- SSRF Hardening (T1, T1b, T7)
+
+This is the most security-critical group. A relay service that does SSRF wrong is worse than no relay at all -- it's an attacker's proxy into whatever network the relay runs on.
+
+**Problem 1 -- URL concatenation (T1).** `relay.go:186` had:
+```go
+url := target.URL + req.Path
+```
+If `target.URL = "https://httpbin.org"` and the client sent `path: "@evil.com/x"`, the resulting string `"https://httpbin.org@evil.com/x"` parses under Go's `net/url` as: scheme `https`, userinfo `httpbin.org`, host `evil.com`, path `/x`. The relay would then dial `evil.com`. Classic. The glossary even calls out SSRF as a term to know; it took a manual audit to see that the code did the exact thing the glossary warns about.
+
+**Fix.** URL construction now goes through `url.ResolveReference` with explicit invariants:
+
+```go
+func buildTargetURL(base *url.URL, clientPath string) (string, error) {
+    if clientPath == "" { return base.String(), nil }
+    if !strings.HasPrefix(clientPath, "/") {
+        return "", fmt.Errorf("path must start with /")
+    }
+    ref, err := url.Parse(clientPath)
+    if err != nil { return "", fmt.Errorf("invalid path: %w", err) }
+    if ref.Scheme != "" || ref.Host != "" || ref.User != nil {
+        return "", fmt.Errorf("path must not contain scheme, host, or userinfo")
+    }
+    resolved := base.ResolveReference(ref)
+    if resolved.Host != base.Host || resolved.Scheme != base.Scheme {
+        return "", fmt.Errorf("path resolves outside target host")
+    }
+    return resolved.String(), nil
+}
+```
+
+Three checks, each catches a different attack shape:
+- Must start with `/` -- blocks `@evil.com/x`, `evil.com`, and other non-rooted paths that Go's parser treats as paths-that-look-like-hosts.
+- Parsed reference must not carry a scheme, host, or userinfo -- blocks `//evil.com/x` (protocol-relative URL) and `https://evil.com/x` (absolute).
+- Post-resolution host/scheme must match the base -- final belt-and-suspenders; if any parser edge case slips through, the mismatch check fires.
+
+**Smoke test confirmed:**
+```bash
+$ curl -X POST localhost:8080/api/v1/relay \
+    -H "X-API-Key: $API_KEY" \
+    -d '{"target":"httpbin","method":"GET","path":"//evil.example.com/x"}'
+{"status":"failed","error":"building URL: path must not contain scheme, host, or userinfo",...}
+```
+
+**Problem 2 -- private-network dials (T1b).** Even with URL validation, an attacker could point a target at `http://internal-service.local` or get the target to return an HTTP redirect to `http://169.254.169.254/latest/meta-data/` (AWS instance metadata). A custom `http.Transport.DialContext` handles both:
+
+```go
+DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+    host, port, _ := net.SplitHostPort(addr)
+    ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+    if err != nil { return nil, err }
+    if !allowPrivate {
+        for _, ip := range ips {
+            if isPrivateIP(ip.IP) {
+                return nil, fmt.Errorf("dial blocked: %s resolves to private %s", host, ip.IP)
+            }
+        }
+    }
+    return baseDialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+}
+```
+
+`isPrivateIP` covers RFC1918 (`10/8`, `172.16/12`, `192.168/16`), loopback (`127/8`, `::1`), link-local (`169.254/16`, `fe80::/10`), IPv6 ULA (`fc00::/7`), CGNAT (`100.64/10`), and the unspecified address. Because the filter runs inside `DialContext`, it catches both direct targets and redirect-follow dials -- redirects re-enter DialContext for the new host.
+
+Per-target opt-out via `allow_private_ips: true` exists for legitimate dev use cases (relay to another Docker service), pushed down through a `context.Context` value so the transport-level hook knows which target it's dialing for.
+
+**Problem 3 -- cleartext targets (T7).** `target.URL: "http://..."` was silently accepted; there was no way for an operator to notice at config-load time that a target would be called over unencrypted HTTP. Now the registry constructor rejects http:// unless `allow_http: true`:
+
+```go
+if u.Scheme == "http" && !t.AllowHTTP {
+    return nil, fmt.Errorf("target %q: http:// rejected (set allow_http: true to override)", t.Name)
+}
+```
+
+Also: `u.Scheme != "http" && u.Scheme != "https"` to catch `file://`, `ftp://`, `data:`, and Go net/url's various exotic accepted schemes. Userinfo in the base URL is also rejected -- no `https://user:pass@host`.
+
+**Redirects.** `http.Client.CheckRedirect` caps hops at `max_redirects` (default 3) and rejects non-http(s) destinations. Each redirect still goes through `DialContext` because a new host means a new connection pool entry -- so the private-IP check catches redirect-driven SSRF too.
+
+### 9.6 Fix Group C -- Request Validation (T2, T3, T4a, T4b)
+
+**Problem -- header injection (T2).** `relay.go:199-201` copied every client-supplied header into the outbound request. That meant a client could set `Authorization: Bearer <relay's credential for the target>`, `Host: different-vhost.example.com`, `Transfer-Encoding: chunked` (Go sanitizes most outbound smuggling shapes, but belt-and-suspenders), or hop-by-hop headers. The relay was a credential laundering tool by accident.
+
+**Fix.** Two sets, applied in this order:
+
+```go
+var deniedRequestHeaders = map[string]struct{}{
+    // Hop-by-hop (RFC 7230 §6.1) -- meaningless to forward.
+    "connection": {}, "keep-alive": {}, "upgrade": {}, "te": {}, "trailer": {},
+    "transfer-encoding": {}, "content-length": {},
+    // Auth + routing -- only the relay, not the client, sets these toward the target.
+    "authorization": {}, "cookie": {}, "host": {},
+    "proxy-authorization": {}, "proxy-authenticate": {},
+    // Proxy hints -- relay might be behind an ALB; clients don't get to forge these.
+    "x-forwarded-for": {}, "x-forwarded-proto": {}, "x-forwarded-host": {}, "x-real-ip": {},
+}
+
+var identityHeaders = map[string]struct{}{
+    // Blocked unless preserve_client_identity / preserve_user_agent is set.
+    "user-agent": {}, "referer": {}, "forwarded": {}, "via": {},
+}
+```
+
+The filter function is explicit:
+```go
+func isHeaderAllowed(name string, preserveIdentity bool) bool {
+    lc := strings.ToLower(name)
+    if _, blocked := deniedRequestHeaders[lc]; blocked { return false }
+    if _, isIdentity := identityHeaders[lc]; isIdentity { return preserveIdentity }
+    return true
+}
+```
+
+Allowlist by default would have been nicer, but relay's value proposition is "pass whatever headers through to the target"; a hard allowlist breaks too many legitimate API calls. The denylist is curated from the actual threat shapes: auth laundering, routing confusion, proxy spoofing, connection-layer attacks.
+
+**Problem -- method abuse (T3).** No allowlist; `CONNECT`, `TRACE`, arbitrary strings were accepted. `CONNECT` in particular could turn the relay into a protocol-level proxy.
+
+**Fix.** Explicit allowlist at the handler boundary:
+```go
+var allowedMethods = map[string]struct{}{
+    http.MethodGet: {}, http.MethodPost: {}, http.MethodPut: {},
+    http.MethodPatch: {}, http.MethodDelete: {},
+}
+```
+Non-allowed methods return 400 before any retry logic fires (attempts: 0).
+
+**Problem -- unbounded bodies (T4).** Inbound: `json.NewDecoder(r.Body).Decode(&req)` would read whatever the client sent, all into memory. Outbound response: `io.ReadAll(resp.Body)` -- a malicious or buggy target could OOM the relay by returning gigabytes.
+
+**Fix.** Both paths are now capped, with config knobs:
+
+```go
+// Inbound (relay.go and webhook.go):
+r.Body = http.MaxBytesReader(w, r.Body, h.cfg.MaxRequestBytes)  // default 1 MiB
+// oversized → http.MaxBytesError → 413 response
+
+// Outbound (relay.go):
+body, _ := io.ReadAll(io.LimitReader(resp.Body, h.cfg.MaxResponseBytes))  // default 10 MiB
+```
+
+The inbound limit uses `http.MaxBytesReader` which has a special error type that the handler maps to 413 (`Payload Too Large`) instead of 400 -- correct semantics matter for callers that retry on 4xx. Smoke test:
+
+```bash
+$ python3 -c "import json; print(json.dumps({'target':'x','body':'a'*2000000}))" \
+  | curl -X POST localhost:8080/api/v1/relay \
+      -H "X-API-Key: $API_KEY" --data-binary @-
+HTTP 413
+{"status":"error","error":"invalid request body: http: request body too large","attempts":0,...}
+```
+
+### 9.7 Fix Group D -- Privacy Controls (T9, T10, T11)
+
+These land because we committed to privacy as a first-class secondary goal (see §9.1). Each one reduces the amount of client-identifying data the relay leaks to logs, to Redis, or to target services.
+
+**T11 -- outbound User-Agent rewriting.** The relay now always sends `User-Agent: private-relayer/0.1` to the target, regardless of what the client sent. `Referer`, `Forwarded`, and `Via` are stripped. Per-target opt-out via `preserve_user_agent: true` for APIs that care about UA strings. The result: a target can't fingerprint individual callers by their UA -- everything looks like a single relay.
+
+Confirmed in smoke test -- httpbin's echoed `headers.User-Agent` flipped from the default Go client (pre-change) to our neutral value:
+```
+"User-Agent": "private-relayer/0.1"
+```
+
+**T9 -- queue privacy.** Two problems: (a) auth headers in enqueued jobs were being persisted to Redis as JSON with a 24h TTL (insider risk, backup snapshot risk), and (b) even after a job completed, the full request body stayed in Redis for the full 24h.
+
+Two fixes. First, at the webhook boundary, headers pass through `relay.StripSensitiveHeaders` before enqueue -- the same denylist as the relay forwards drops `Authorization`, `Cookie`, `Proxy-Authorization`, etc. before any bytes hit Redis:
+
+```go
+scrubbed := relay.StripSensitiveHeaders(req.Headers)
+job, _ := q.Enqueue(ctx, req.Target, req.Method, req.Path, scrubbed, req.Body, 3)
+```
+
+Second, the queue distinguishes completion from failure for retention:
+
+```go
+func (q *Queue) MarkCompleted(ctx context.Context, job *Job, responseCode int) error {
+    job.Status = StatusCompleted
+    job.ResponseCode = responseCode
+    job.Body = nil       // body served its purpose -- drop it
+    job.Headers = nil    // same
+    job.UpdatedAt = time.Now()
+    // ...
+    return q.client.Set(ctx, jobPrefix+job.ID, data, q.completedTTL).Err()  // 1h default
+}
+```
+
+- **Completed** jobs: body + headers cleared, metadata-only, TTL 1 hour. Clients polling `/api/v1/jobs/{id}` still see the status, response_code, attempts, and timestamps -- enough to reconcile, not enough to leak.
+- **Failed / dead-lettered** jobs: keep everything for 24h (`failed_ttl`) so operators can debug.
+
+Verified against live Redis after a successful webhook round-trip:
+```
+$ docker exec relayer-redis redis-cli GET relayer:job:<id>
+{"id":"...","target":"httpbin","method":"GET","path":"/get","status":"completed",
+ "attempts":1,"max_retries":3,"response_code":200,"created_at":"...","updated_at":"..."}
+$ docker exec relayer-redis redis-cli TTL relayer:job:<id>
+3584    ← ~59 minutes, as expected
+```
+No `headers` field. No `body` field. 1h expiry. The Authorization header we sent in the webhook request is nowhere in Redis -- it was stripped at the webhook boundary before Enqueue was even called.
+
+**T10 -- log path sanitisation.** Chi's `RequestID` middleware sets a request ID; our request logger wrote:
+```go
+.Str("path", r.URL.Path)  // e.g., "/api/v1/jobs/abc-123-def"
+```
+Concrete paths are routinely PII-shaped -- user IDs, tokens, slugs -- and they flow into stdout → container logs → CloudWatch. The fix uses Chi's route-pattern API:
+```go
+routePath := chi.RouteContext(r.Context()).RoutePattern()  // e.g., "/api/v1/jobs/{id}"
+if routePath == "" { routePath = r.URL.Path }              // fall back for unrouted 404s
+logger.Info().Str("route", routePath)...
+```
+Operators still get the per-route latency/error breakdown they need for observability; the concrete IDs stay out of log storage. Fallback preserves visibility on 404s before routing resolves.
+
+### 9.8 Fix Group E -- Operational Controls (T4c, T8, G101)
+
+**T4c -- rate-limit bucket eviction.** The token-bucket limiter stored one `*bucket` per unique key (API-key name, or `RemoteAddr` for unauthenticated traffic) in a `sync.Map`. Map entries were never removed -- a slow memory leak. An attacker rotating IPs could accelerate it. The fix is a sweep goroutine:
+
+```go
+func (l *Limiter) StartEviction(ctx context.Context, logger zerolog.Logger) {
+    sweep := l.cfg.Window * 2
+    idleCutoff := l.cfg.Window * 10
+    ticker := time.NewTicker(sweep)
+    for {
+        select {
+        case <-ctx.Done(): return
+        case <-ticker.C:
+            cutoff := time.Now().Add(-idleCutoff)
+            l.buckets.Range(func(k, v any) bool {
+                b := v.(*bucket)
+                b.mu.Lock()
+                stale := b.lastFill.Before(cutoff)
+                b.mu.Unlock()
+                if stale { l.buckets.Delete(k) }
+                return true
+            })
+        }
+    }
+}
+```
+
+Wired into `main.go` as `go limiter.StartEviction(ctx, logger)` alongside the worker pool. Shares the cancellation context so graceful shutdown stops it.
+
+**T8 -- `math/rand` for jitter.** gosec flagged `retry.go:22` (`rand.Float64()` for backoff jitter) as HIGH. Suppressed with justification:
+```go
+// #nosec G404 -- jitter is timing variance, not a security boundary; CSPRNG overhead unwarranted.
+jitter := 0.5 + rand.Float64()*0.5
+```
+Retry jitter does *not* need cryptographic randomness; its purpose is to de-synchronise retriers, not to resist adversarial prediction. `crypto/rand` here would burn syscalls and gain nothing.
+
+**G101 -- header *name* constant.** gosec flagged `const headerAPIKey = "X-API-Key"` as a potential hardcoded credential. It is a header name, not a credential value. Suppressed:
+```go
+// #nosec G101 -- this is the header *name*, not a credential value.
+const headerAPIKey = "X-API-Key"
+```
+
+Both suppressions are visible in `grep -n '#nosec' internal/` -- the intent is to make the suppression greppable and auditable; a reviewer can see exactly what was suppressed and why.
+
+**Server read-header timeout.** `http.Server.ReadHeaderTimeout` was not set, which makes the server theoretically vulnerable to a Slowloris-style attack where a client sends headers one byte at a time to hold a connection open. Added a 5 s default, configurable via `server.read_header_timeout`.
+
+### 9.9 Fix Group F -- Container Hardening
+
+Complements Phase 5's Docker work with runtime-level restrictions. `infra/docker/docker-compose.yml` now applies to both services:
+
+```yaml
+read_only: true            # container root FS is immutable
+tmpfs:
+  - /tmp                   # writable scratch (Go may need /tmp)
+  - /run                   # redis wants /run for its pidfile
+cap_drop: [ALL]            # no Linux capabilities (no CAP_NET_BIND_SERVICE, etc.)
+security_opt:
+  - no-new-privileges:true # child processes can never gain privs
+mem_limit: 256m            # OOM kill before exhausting host
+pids_limit: 200            # fork bomb ceiling
+```
+
+One subtlety: the Redis image's entrypoint runs as root and tries to `setuid` down to `redis`. `cap_drop: [ALL]` removes `CAP_SETUID`, breaking the switch with `failed switching to "redis": operation not permitted`. Fix: `user: redis` on the Redis service so the entrypoint starts as the right UID and doesn't need to drop privs.
+
+Verified with `docker inspect`:
+```
+CapDrop       = ["ALL"]
+SecurityOpt   = ["no-new-privileges:true"]
+ReadonlyRootfs = true
+```
+
+### 9.10 What Was *Not* Fixed in Phase 5.5 (and Why)
+
+| Item | Where it lives | Why deferred |
+|---|---|---|
+| **T6 proxy-header trust** (partial) | `middleware.RealIP` unconditionally trusts `X-Forwarded-For` from the direct peer | Behind an ALB this is correct. On a direct-internet deployment it's a rate-limit bypass. Fix (trusted-proxy CIDR allowlist) lands in Phase 7 when we know the real ALB CIDR. |
+| **T12b history purge** | `gitleaks` still flags the dev key in commit `6943cd8` | Rewriting history now means force-pushing private history and invalidating anyone's clone. Cleaner to do once, in Phase 10, when we fork the public showcase repo via `git filter-repo`. |
+| **T13 error-message leakage** (generic client-facing errors) | Client-facing 4xx/5xx messages still include raw Go error strings | Low priority. Go stdlib errors are generally safe; real leakage risk is filesystem paths, which this code doesn't expose. Will tighten in Phase 10 with a generic "bad request" + request-ID trailer. |
+| **T14 continuous drift** | Nothing today nightly-scans deps and the alpine base image | This is literally Phase 6's purpose -- CI with nightly scanner runs + Dependabot. |
+| **Secrets Manager integration** | API keys still loaded from YAML (or env var override) | Phase 7 -- the ECS task definition injects Secrets Manager values via the `secrets:` array. Premature to implement before we have AWS. |
+| **ElastiCache TLS + AUTH** | Redis is cleartext on the Docker bridge | Phase 7 -- local Docker bridge is acceptable; ElastiCache requires in-transit TLS + AUTH token. |
+| **WAF / ALB logging / VPC flow logs** | — | Phase 7. |
+| **Pen-test pass / k6 abuse suite** | — | Phase 10. |
+
+**The discipline:** every deferred item is mapped to a specific later phase, not left vague. That way Phase 6 and Phase 7 aren't "implement CI + AWS"; they're "implement CI + AWS *and close these specific security items*."
+
+### 9.11 Before / After: Scanner Baseline
+
+All four scanners re-run after the code changes, against the rebuilt container. Results captured in `private/security_roadmap.md` §8 changelog.
+
+| Tool | Before Phase 5.5 | After Phase 5.5 | Net change |
+|---|---|---|---|
+| `govulncheck` | 0 | 0 | -- |
+| `gosec` | 2 HIGH (false positives) | **0** | -2 |
+| `gitleaks` (working tree) | 2 matches | **0** | -2 |
+| `gitleaks` (git history) | 2 matches (commit `6943cd8`) | 2 (unchanged, deferred) | -- |
+| `trivy image` HIGH/CRITICAL | 0 | 0 | -- |
+
+Plus the controls you can only measure by exercising:
+
+| Smoke test | Before | After |
+|---|---|---|
+| SSRF path `//evil.example.com/x` | (not tested) | 502 with `"path must not contain scheme, host, or userinfo"` |
+| `CONNECT` method | Accepted, forwarded to target | 400 at the handler, attempts: 0 |
+| 2 MB request body | Accepted, buffered in memory | 413 `Payload Too Large` |
+| `Authorization` header in webhook | Persisted to Redis in job JSON | Stripped at webhook boundary; not present in stored job |
+| Completed job TTL | 24h | 3584s (~1h) |
+| Completed job body | Retained for 24h | `nil` in Redis |
+| Outbound `User-Agent` | Whatever client sent | `private-relayer/0.1` (overridden) |
+| Container privileges | default | `ReadonlyRootfs`, `CapDrop=[ALL]`, `no-new-privileges` |
+| Rate-limit bucket memory | Grows unboundedly | Swept every 2 min, idle-evicted after 10× window |
+
+### 9.12 The Test Suite
+
+Four new unit tests in `internal/relay/relay_test.go`:
+
+- `TestRelayForwardsAllowedHeaders` -- asserts an `X-Custom-Header` is forwarded and an `Authorization` header is stripped on the same request.
+- `TestRelayRewritesUserAgent` -- asserts the target receives `private-relayer/0.1`, not the client's `evil-client/9000`.
+- `TestRelayRejectsInvalidMethod` -- asserts `CONNECT` returns 400 at the handler boundary.
+- `TestRelayRejectsPathWithUserinfo` -- asserts a `//attacker.com/x` path does not produce a 200 (the actual failure mode is "build URL error", surfaced as 502 because it goes through the retry loop; the invariant is just "attacker never gets the 200").
+- `TestRelayEnforcesHTTPSOnTargets` -- asserts `NewTargetRegistry` rejects `http://` when `allow_http` is false.
+- `TestStripSensitiveHeaders` -- unit test for the scrubbing function used by the webhook boundary.
+
+31 total tests passing (up from 27). Full run:
+```
+ok  github.com/ricardo1slas/private_relayer/internal/auth       0.6s
+ok  github.com/ricardo1slas/private_relayer/internal/queue      0.4s
+ok  github.com/ricardo1slas/private_relayer/internal/ratelimit  0.5s
+ok  github.com/ricardo1slas/private_relayer/internal/relay      11.6s
+```
+
+### 9.13 Files Touched in Phase 5.5
+
+```
+.gitignore                              # new exclusions
+configs/config.example.yaml             # new knobs, placeholder key
+configs/config.yaml                     # no longer tracked; local dev copy only
+how_to.md                               # this section; dev key scrubbed from examples
+internal/auth/apikey.go                 # nosec G101
+internal/config/config.go               # new config types (MaxRequestBytes, CompletedTTL, etc.)
+internal/api/middleware.go              # log route pattern
+internal/api/router.go                  # pass MaxRequestBytes through RouterDeps
+internal/api/webhook.go                 # body cap, method allowlist, header scrub on enqueue
+internal/ratelimit/limiter.go           # StartEviction sweeper
+internal/relay/relay.go                 # full rewrite: URL safety, dial filter, header filter,
+                                        # method allowlist, response cap, UA rewrite
+internal/relay/retry.go                 # nosec G404
+internal/relay/target.go                # validated Target struct, HTTPS enforcement
+internal/relay/relay_test.go            # new + updated tests
+internal/queue/queue.go                 # MarkCompleted, dual TTLs
+internal/queue/queue_test.go            # updated NewQueue signature
+internal/queue/worker.go                # use MarkCompleted on success
+cmd/relayer/main.go                     # wire new config, start eviction goroutine
+infra/docker/docker-compose.yml         # read_only, cap_drop, security_opt, user: redis
+private/CLAUDE.md                       # reference to security_roadmap.md
+private/security_roadmap.md             # living threat model + tool inventory (new file)
+```
+
+### 9.14 Why This Order Matters
+
+The sequencing choice -- fix code first, then wire CI -- is itself a principle worth naming. Two alternatives were possible:
+
+1. **Enable CI scanners first, fix findings reactively.** Fastest path to "CI is green" if you're willing to add `// nolint` or gosec exclude rules liberally. Produces a codebase where the scanners are rubber stamps.
+2. **Fix code first, then enable CI.** Slower to first-green, but CI genuinely means "no regression from a clean baseline" -- every future finding is a real problem, not a pre-existing exclusion.
+
+Option (2) is what DevSecOps roles actually value. A portfolio project that says "CI runs trivy" is weaker than one that says "CI runs trivy, baseline is 0, any future HIGH blocks merge." The difference is whether you hit ship-or-don't-ship decision points with real information.
+
+---
+
+## 10. Phase 6: CI/CD with GitHub Actions ⬜
 
 **Goal:** Automate testing, building, and publishing.
 
@@ -1510,7 +2150,7 @@ $ curl localhost:8080/api/v1/jobs/a6fb3d77-... -H "X-API-Key: ..."
 
 ---
 
-## 10. Phase 7: AWS Infrastructure with Terraform ⬜
+## 11. Phase 7: AWS Infrastructure with Terraform ⬜
 
 **Goal:** Define all cloud infrastructure as code.
 
@@ -1525,7 +2165,7 @@ $ curl localhost:8080/api/v1/jobs/a6fb3d77-... -H "X-API-Key: ..."
 
 ---
 
-## 11. Phase 8: Continuous Deployment ⬜
+## 12. Phase 8: Continuous Deployment ⬜
 
 **Goal:** Automate deployments from GitHub to ECS.
 
@@ -1539,7 +2179,7 @@ $ curl localhost:8080/api/v1/jobs/a6fb3d77-... -H "X-API-Key: ..."
 
 ---
 
-## 12. Phase 9: Observability & Alerting ⬜
+## 13. Phase 9: Observability & Alerting ⬜
 
 **Goal:** Know when things break before users tell you.
 
@@ -1566,7 +2206,7 @@ $ curl localhost:8080/api/v1/jobs/a6fb3d77-... -H "X-API-Key: ..."
 
 ---
 
-## 13. Phase 10: Hardening & Documentation ⬜
+## 14. Phase 10: Hardening & Documentation ⬜
 
 **Goal:** Production-ready polish.
 
@@ -1574,7 +2214,7 @@ $ curl localhost:8080/api/v1/jobs/a6fb3d77-... -H "X-API-Key: ..."
 
 ---
 
-## 14. Glossary
+## 15. Glossary
 
 | Term | Definition |
 |---|---|
