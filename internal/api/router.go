@@ -1,0 +1,45 @@
+package api
+
+import (
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/redis/go-redis/v9"
+	"github.com/ricardo1slas/private_relayer/internal/auth"
+	"github.com/ricardo1slas/private_relayer/internal/queue"
+	"github.com/ricardo1slas/private_relayer/internal/ratelimit"
+	"github.com/ricardo1slas/private_relayer/internal/relay"
+	"github.com/rs/zerolog"
+)
+
+type RouterDeps struct {
+	Logger       zerolog.Logger
+	RelayHandler *relay.Handler
+	APIKeyAuth   *auth.APIKeyAuth
+	Limiter      *ratelimit.Limiter
+	Queue        *queue.Queue
+	RedisClient  *redis.Client
+}
+
+func NewRouter(deps RouterDeps) chi.Router {
+	r := chi.NewRouter()
+
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(requestLogger(deps.Logger))
+	r.Use(middleware.Recoverer)
+
+	// Health endpoints -- no auth, no rate limiting.
+	r.Get("/health", healthHandler())
+	r.Get("/ready", readyHandler(deps.RedisClient))
+
+	// API routes -- auth + rate limiting.
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Use(deps.APIKeyAuth.Middleware)
+		r.Use(deps.Limiter.Middleware)
+		r.Post("/relay", deps.RelayHandler.ServeHTTP)
+		r.Post("/webhook", webhookHandler(deps.Queue))
+		r.Get("/jobs/{id}", jobStatusHandler(deps.Queue))
+	})
+
+	return r
+}

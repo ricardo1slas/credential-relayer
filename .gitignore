@@ -1,0 +1,15 @@
+# Private / sensitive files
+.profile.md
+.env
+.env.*
+
+# Build output
+bin/
+
+# OS files
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp

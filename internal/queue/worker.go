@@ -1,0 +1,111 @@
+package queue
+
+import (
+	"context"
+	"time"
+
+	"github.com/ricardo1slas/private_relayer/internal/relay"
+	"github.com/rs/zerolog"
+)
+
+type WorkerPoolConfig struct {
+	Workers    int
+	RetryDelay time.Duration
+	MaxRetries int
+}
+
+type WorkerPool struct {
+	queue   *Queue
+	handler *relay.Handler
+	cfg     WorkerPoolConfig
+	logger  zerolog.Logger
+}
+
+func NewWorkerPool(q *Queue, handler *relay.Handler, cfg WorkerPoolConfig, logger zerolog.Logger) *WorkerPool {
+	if cfg.Workers == 0 {
+		cfg.Workers = 5
+	}
+	if cfg.RetryDelay == 0 {
+		cfg.RetryDelay = 30 * time.Second
+	}
+	return &WorkerPool{
+		queue:   q,
+		handler: handler,
+		cfg:     cfg,
+		logger:  logger,
+	}
+}
+
+// Start launches worker goroutines. Blocks until ctx is cancelled.
+func (wp *WorkerPool) Start(ctx context.Context) {
+	wp.logger.Info().Int("workers", wp.cfg.Workers).Msg("starting worker pool")
+
+	for i := 0; i < wp.cfg.Workers; i++ {
+		go wp.worker(ctx, i)
+	}
+
+	<-ctx.Done()
+	wp.logger.Info().Msg("worker pool shutting down")
+}
+
+func (wp *WorkerPool) worker(ctx context.Context, id int) {
+	logger := wp.logger.With().Int("worker_id", id).Logger()
+	logger.Info().Msg("worker started")
+
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Info().Msg("worker stopped")
+			return
+		default:
+		}
+
+		job, err := wp.queue.Dequeue(ctx, 5*time.Second)
+		if err != nil {
+			// BRPop timeout or context cancelled -- just loop.
+			continue
+		}
+
+		wp.processJob(ctx, job, logger)
+	}
+}
+
+func (wp *WorkerPool) processJob(ctx context.Context, job *Job, logger zerolog.Logger) {
+	logger = logger.With().Str("job_id", job.ID).Str("target", job.Target).Logger()
+	logger.Info().Msg("processing job")
+
+	job.Status = StatusProcessing
+	job.Attempts++
+	_ = wp.queue.UpdateJob(ctx, job)
+
+	// Use the relay handler's internal method to execute the relay.
+	resp, _, err := wp.handler.ExecuteRelay(ctx, job.Target, job.Method, job.Path, job.Headers, job.Body)
+	if err != nil {
+		logger.Error().Err(err).Int("attempt", job.Attempts).Msg("job relay failed")
+
+		job.Error = err.Error()
+		if job.Attempts >= job.MaxRetries {
+			logger.Warn().Msg("max retries reached, sending to dead-letter queue")
+			_ = wp.queue.SendToDeadLetter(ctx, job)
+			return
+		}
+
+		// Wait before requeue.
+		select {
+		case <-time.After(wp.cfg.RetryDelay):
+		case <-ctx.Done():
+			return
+		}
+
+		_ = wp.queue.Requeue(ctx, job)
+		return
+	}
+
+	job.Status = StatusCompleted
+	job.ResponseCode = resp.StatusCode
+	job.Error = ""
+	_ = wp.queue.UpdateJob(ctx, job)
+	_ = resp.Body.Close()
+
+	logger.Info().Int("status", resp.StatusCode).Msg("job completed")
+}
