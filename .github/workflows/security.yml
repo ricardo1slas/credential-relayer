@@ -1,0 +1,88 @@
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Nightly re-scan of the base image + deps. Catches CVEs that landed
+    # after we last pushed, without requiring code changes.
+    - cron: "17 6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  govulncheck:
+    name: govulncheck (reachable Go CVEs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: run govulncheck
+        run: govulncheck ./...
+
+  gitleaks:
+    name: gitleaks (secrets in working tree)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install gitleaks
+        run: |
+          GL_VERSION=8.30.1
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VERSION}/gitleaks_${GL_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp
+          sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
+      # --no-git scans the working tree only. The pre-existing leak in commit
+      # 6943cd8 is tracked as T12b in private/security_roadmap.md and will be
+      # purged from history in Phase 10 when the public showcase repo is forked.
+      - name: run gitleaks
+        run: gitleaks detect --source . --no-git --redact --exit-code 1
+
+  trivy-image:
+    name: trivy (image CVEs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/Dockerfile
+          load: true
+          tags: private-relayer:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: trivy image scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: private-relayer:scan
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          format: table
+
+  trivy-config:
+    name: trivy (Dockerfile + compose misconfigs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: trivy config scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: infra/docker
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          format: table

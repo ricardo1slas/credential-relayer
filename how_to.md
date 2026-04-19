@@ -15,7 +15,7 @@
 7. [Phase 4: Redis Queue & Async Processing](#7-phase-4-redis-queue--async-processing) ⬜
 8. [Phase 5: Docker & Docker Compose](#8-phase-5-docker--docker-compose) 🚧
 9. [Phase 5.5: Security & Privacy Hardening](#9-phase-55-security--privacy-hardening) ✅
-10. [Phase 6: CI/CD with GitHub Actions](#10-phase-6-cicd-with-github-actions) ⬜
+10. [Phase 6: CI/CD with GitHub Actions](#10-phase-6-cicd-with-github-actions) ✅
 11. [Phase 7: AWS Infrastructure with Terraform](#11-phase-7-aws-infrastructure-with-terraform) ⬜
 12. [Phase 8: Continuous Deployment](#12-phase-8-continuous-deployment) ⬜
 13. [Phase 9: Observability & Alerting](#13-phase-9-observability--alerting) ⬜
@@ -2136,17 +2136,247 @@ Option (2) is what DevSecOps roles actually value. A portfolio project that says
 
 ---
 
-## 10. Phase 6: CI/CD with GitHub Actions ⬜
+## 10. Phase 6: CI/CD with GitHub Actions ✅
 
-**Goal:** Automate testing, building, and publishing.
+**Goal:** Turn the Phase 5.5 security baseline into an enforceable merge gate -- every PR and every push to `main` runs the same scanners we ran by hand, plus the Go test suite and a Docker build. Nightly cron re-scans the latest base image so CVEs landing upstream can't silently rot our image.
 
-**Status:** NOT STARTED
+**Status:** COMPLETED -- 3 workflows (`ci.yml`, `security.yml`, `codeql.yml`), Dependabot configured, gosec promoted into `golangci-lint`, all green locally.
 
-### Key Design Decisions (Upcoming)
+### 10.0 Why Split Into Three Workflows
 
-- **Trivy for image scanning**: Checks for CVEs in the base image and Go dependencies.
-- **gosec for code scanning**: Static analysis for Go security issues (SQL injection, command injection, etc.)
-- **ECR over Docker Hub**: AWS-native, private by default, integrates with ECS without extra credentials.
+One big workflow would have worked, but splitting matches the different audiences and schedules:
+
+```
+┌────────────────────── ci.yml ────────────────────────┐
+│  Triggers: push + PR                                 │
+│  Purpose: "does this code compile, lint, test,       │
+│           and build an image?"                       │
+│  Fails: lint errors, test failures, Docker issues    │
+└──────────────────────────────────────────────────────┘
+
+┌──────────────────── security.yml ────────────────────┐
+│  Triggers: push + PR + nightly cron                  │
+│  Purpose: "does this code regress any of the         │
+│           Phase 5.5 baseline controls?"              │
+│  Fails: CVEs in deps or image, committed secrets,    │
+│         Dockerfile misconfig                         │
+└──────────────────────────────────────────────────────┘
+
+┌────────────────────── codeql.yml ────────────────────┐
+│  Triggers: push + PR + weekly cron                   │
+│  Purpose: deep semantic analysis (security-extended) │
+│  Fails: SARIF findings surface in Security tab       │
+│         (informational; not a merge blocker yet)     │
+└──────────────────────────────────────────────────────┘
+```
+
+Two reasons to split instead of inline:
+
+1. **Failure clarity.** "CI failed" is unhelpful; "security failed → gitleaks found a new secret" is actionable. A reviewer who sees three separate checks on a PR knows which category to look at.
+2. **Scheduling.** `ci.yml` runs per-push and cancels previous runs via concurrency groups. `security.yml` also runs nightly -- so even if no one pushes for a week, Monday's stand-up discovers "hey, `alpine:3.21.8` dropped a critical CVE." `codeql.yml` runs weekly because CodeQL is slow and the signal-to-noise ratio on a small Go codebase doesn't justify running it on every PR (it's already caught by the two faster workflows).
+
+A fourth workflow (CD -- build-and-push to ECR) lands in Phase 8 once AWS exists.
+
+### 10.1 `ci.yml` -- Correctness
+
+Three jobs, run in parallel:
+
+**`lint`** -- `golangci-lint` v2 with the configuration in `.golangci.yml`:
+- `errcheck`, `govet`, `staticcheck`, `unused`, `ineffassign` (already in place pre-Phase-6)
+- **`gosec`** added in Phase 6. The two known false positives (`G404` in `retry.go`, `G101` in `apikey.go`) are suppressed inline with `// #nosec` comments and justifications, so the linter stays strict; if *new* occurrences appear, the lint job fails.
+- Uses `golangci/golangci-lint-action@v6` which pins the linter version (`v2.1.6` today) and caches the analysis DB across runs.
+
+**`test`** -- `go test -race -count=1 -timeout=3m ./...` with a real Redis in a service container:
+```yaml
+services:
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 5
+```
+- `-race` catches data races (we rely heavily on goroutines -- worker pool, rate-limit sweeper, signal handler).
+- `-count=1` defeats test caching; we always want the queue tests to actually hit Redis.
+- `-timeout=3m` keeps a runaway test from burning an hour of CI minutes.
+- The queue tests read `TEST_REDIS_ADDR` (set by the test helper) and fall back to `localhost:6379` -- which is exactly where the GitHub-Actions-provided service container maps. No extra config needed.
+
+**`build`** -- `docker/build-push-action@v6` with Buildx + GitHub Actions cache:
+```yaml
+cache-from: type=gha
+cache-to: type=gha,mode=max
+```
+- `load: true` loads the built image into the runner's local Docker so a follow-up step can smoke-test it.
+- No push yet -- pushing to ECR is Phase 8's job once the infrastructure + OIDC trust are in place.
+
+All three use `actions/setup-go@v5` with `go-version-file: go.mod` so Go's version stays pinned by the source, not a CI-specific constant that can drift.
+
+### 10.2 `security.yml` -- Regression Gate
+
+Four parallel scanner jobs. Each one mirrors what we ran locally in Phase 5.5, so `make <whatever>` and "the scan in CI" produce the same result.
+
+**`govulncheck`** -- reachability-aware Go vulnerability scanner:
+```yaml
+- run: go install golang.org/x/vuln/cmd/govulncheck@latest
+- run: govulncheck ./...
+```
+Unlike `gosec` (pattern match) or `trivy` (package version match), `govulncheck` builds the call graph and only flags vulns your code actually reaches. Fewer false positives, zero tolerance is reasonable.
+
+**`gitleaks`** -- secrets scanner, working-tree only:
+```yaml
+- run: gitleaks detect --source . --no-git --redact --exit-code 1
+```
+The `--no-git` flag is the key choice. By default gitleaks scans git history, which would surface the pre-Phase-5.5 dev key in commit `6943cd8` (tracked as T12b in `private/security_roadmap.md`, slated for `git filter-repo` cleanup in Phase 10). `--no-git` limits the scan to what's currently committed in the working tree -- so CI gates *future* secrets without forcing a history-rewrite decision today. If someone adds a new credential in a PR, CI catches it. If someone tries to revive the old one, CI catches it. Both gates, without the cost.
+
+**`trivy-image`** -- CVE scan of the built container:
+```yaml
+- uses: aquasecurity/trivy-action@0.28.0
+  with:
+    image-ref: private-relayer:scan
+    severity: HIGH,CRITICAL
+    exit-code: "1"
+    ignore-unfixed: true
+```
+- `ignore-unfixed: true` means we don't block on CVEs that have no patch available -- not actionable and adds noise.
+- `severity: HIGH,CRITICAL` matches our Phase 5.5 threshold.
+- Cache hit on the Buildx cache means this job doesn't pay the build cost twice in a run.
+
+**`trivy-config`** -- Dockerfile + compose misconfiguration scan:
+```yaml
+- uses: aquasecurity/trivy-action@0.28.0
+  with:
+    scan-type: config
+    scan-ref: infra/docker
+    severity: HIGH,CRITICAL
+    exit-code: "1"
+```
+Catches things like "no HEALTHCHECK", "running as root", "using `:latest` tag". We pass today because Phase 5 + 5.5 already hardened these, but the gate prevents a future `docker-compose.yml` change from silently undoing `read_only: true` or `cap_drop: [ALL]`.
+
+**Nightly cron at 06:17 UTC** re-runs everything even if nothing is pushed. That's the answer to T14 (dependency/image drift) in the security roadmap -- CVEs landing on `alpine:3.21` a week after we last pushed will surface on the next morning's run instead of whenever someone next opens a PR.
+
+### 10.3 `codeql.yml` -- Deep Analysis
+
+GitHub-native static analysis with the `security-extended` + `security-and-quality` query suites:
+```yaml
+- uses: github/codeql-action/init@v3
+  with:
+    languages: go
+    queries: security-extended,security-and-quality
+- uses: github/codeql-action/autobuild@v3
+- uses: github/codeql-action/analyze@v3
+```
+
+CodeQL runs the Go queries from the CodeQL repo -- substantial overlap with gosec but with different strengths: it's better at taint tracking (can follow a client-supplied string from handler to outbound `http.Do`) and SARIF output integrates into GitHub's Security tab without any extra configuration. Findings are advisory today -- they surface in the Security tab as alerts, not as blocking PR checks -- because CodeQL noise is real on small codebases and we already have three other layers catching the likely issues. If we hit a genuine SSRF or injection regression that CodeQL catches and the others don't, we can flip it to a blocker.
+
+Weekly schedule (Monday 08:32 UTC) because CodeQL is slow enough that running it per-PR would double our CI latency.
+
+### 10.4 `dependabot.yml` -- Keep Them Current
+
+Three ecosystems:
+
+| Ecosystem | What it watches | Cadence |
+|---|---|---|
+| `gomod` | `go.mod` / `go.sum` | Weekly, Mondays |
+| `docker` | `FROM` lines in `infra/docker/Dockerfile` | Weekly, Mondays |
+| `github-actions` | `uses: @v5` pins in `.github/workflows/*.yml` | Weekly, Mondays |
+
+Grouped config for Go:
+```yaml
+groups:
+  go-minor-and-patch:
+    update-types: [minor, patch]
+```
+means patch-level updates arrive as a single weekly PR, not 15 separate PRs. Major bumps still come individually because they may be breaking. Security advisories (any severity) bypass the schedule and open immediately.
+
+The key insight: Dependabot *creates* PRs; CI *validates* them. If Dependabot proposes bumping `chi` from 5.2.5 to 5.2.6 and the new version breaks a test, the PR sits red until a human looks. No silent drift.
+
+### 10.5 Concurrency + Permissions Hygiene
+
+Each workflow declares:
+```yaml
+permissions:
+  contents: read
+concurrency:
+  group: <name>-${{ github.ref }}
+  cancel-in-progress: true
+```
+
+- **`contents: read`** is the minimum; CodeQL also needs `security-events: write` to upload SARIF. Every other token surface is denied. This is "principal of least privilege" at the workflow level.
+- **Concurrency groups** cancel superseded runs. If you push three commits in a row, only the last one's CI survives -- saves runner minutes and surfaces the real result faster.
+
+### 10.6 Branch Protection (Operator-Performed)
+
+CI being green on a PR only matters if merges require CI to be green. That's a branch-protection setting, not something we can commit:
+
+```
+Settings → Branches → main → Branch protection rule
+  ☑ Require a pull request before merging
+  ☑ Require status checks to pass before merging
+      Required checks:
+        ci / lint
+        ci / test
+        ci / build
+        security / govulncheck
+        security / gitleaks
+        security / trivy-image
+        security / trivy-config
+  ☑ Require branches to be up to date before merging
+  ☑ Do not allow bypassing the above settings
+```
+
+`codeql / analyze` deliberately **not** required -- see §10.3. Flip it later if we ever want SARIF findings to be blockers.
+
+### 10.7 Local-Parity Commands
+
+The scanners that gate CI all have a local equivalent. We rely on this when developing:
+
+```bash
+# Same tool, same flags, same version family as CI:
+make lint                                          # golangci-lint, includes gosec
+go test -race -count=1 -timeout=3m ./...           # same as ci.yml test job
+~/go/bin/govulncheck ./...                         # same as security.yml
+gitleaks detect --source . --no-git --redact       # same as security.yml
+trivy image --severity HIGH,CRITICAL private-relayer:local
+trivy config --severity HIGH,CRITICAL infra/docker
+```
+
+Running these locally before pushing means CI failures are almost always flakes (network) or version drift -- not things a pre-push check would have caught.
+
+### 10.8 What Phase 6 Does *Not* Do
+
+- **No deploy.** Building + scanning is the whole job. ECR push + ECS rollout are Phase 8.
+- **No secrets handling in CI yet.** None of these jobs need AWS credentials or API tokens. Phase 8 will add `permissions: id-token: write` + OIDC to federate a short-lived AWS role.
+- **No release automation.** Tags, changelogs, GitHub Releases -- Phase 10.
+- **No SBOM publication.** Generating `cyclonedx-gomod` / `syft` outputs per release -- Phase 10.
+
+Deferrals tracked by name so Phase 8 + 10 aren't vague "CD" and "polish" phases -- they close specific items from this list.
+
+### 10.9 What Closed in the Security Roadmap
+
+Phase 6 closes **T14 (dependency + container drift)** in `private/security_roadmap.md`. The controls:
+- `govulncheck` on every PR and nightly -- new CVEs in reachable Go deps fail the build.
+- `trivy` on every PR and nightly -- new CVEs in the alpine base image or Go binary fail the build.
+- Dependabot -- deps + base image + GHA versions auto-updated weekly; security advisories bypass the schedule.
+
+Plus it reinforces the Phase 5.5 closures by turning them into regression gates. A future commit that adds an SSRF, reintroduces the committed dev key, or removes `#nosec` justifications (making gosec flag the false positives again) now fails CI instead of sneaking through.
+
+### 10.10 Local Verification Before Commit
+
+Before considering Phase 6 shipped:
+
+```bash
+# Validate YAML
+actionlint .github/workflows/*.yml                 # clean
+python3 -c "import yaml; yaml.safe_load(open('.github/dependabot.yml'))"
+
+# Run what CI runs
+make lint                                          # 0 issues
+go test -race -count=1 -timeout=3m ./...           # all packages ok
+~/go/bin/govulncheck ./...                         # no vulnerabilities
+gitleaks detect --source . --no-git --redact --exit-code 1   # no leaks
+trivy image --severity HIGH,CRITICAL private-relayer:local   # 0 vulns
+trivy config --severity HIGH,CRITICAL infra/docker           # 0 misconfigs
+```
+
+All commands pass. First PR after the initial push is where the remote CI runs for real; plan on a 30-second follow-up commit to fix whatever version drift the hosted runners catch that local didn't.
 
 ---
 

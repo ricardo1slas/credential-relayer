@@ -1,0 +1,40 @@
+version: 2
+
+updates:
+  # Go modules -- keeps chi, koanf, go-redis, zerolog current. Security-advisory
+  # patches are auto-PRd; minor/patch bumps are weekly.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - go
+    groups:
+      go-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Dockerfile base image -- catches CVE patches on alpine/golang without a
+  # manual rebuild cadence.
+  - package-ecosystem: docker
+    directory: /infra/docker
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - docker
+
+  # GitHub Actions versions -- keeps checkout@v4, setup-go@v5, etc. current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - ci

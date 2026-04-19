@@ -344,10 +344,10 @@ func TestRelayEnforcesHTTPSOnTargets(t *testing.T) {
 
 func TestStripSensitiveHeaders(t *testing.T) {
 	in := map[string]string{
-		"Authorization":   "Bearer xyz",
-		"Cookie":          "session=abc",
-		"X-Api-Key":       "plain",
-		"X-Custom":        "keep-me",
+		"Authorization":       "Bearer xyz",
+		"Cookie":              "session=abc",
+		"X-Api-Key":           "plain",
+		"X-Custom":            "keep-me",
 		"Proxy-Authorization": "Basic abc",
 	}
 	out := StripSensitiveHeaders(in)

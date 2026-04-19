@@ -61,11 +61,11 @@ type ServerConfig struct {
 }
 
 type QueueConfig struct {
-	Redis           RedisConfig   `koanf:"redis"`
-	Workers         int           `koanf:"workers"`
-	RetryDelay      time.Duration `koanf:"retry_delay"`
-	CompletedTTL    time.Duration `koanf:"completed_ttl"`
-	FailedTTL       time.Duration `koanf:"failed_ttl"`
+	Redis        RedisConfig   `koanf:"redis"`
+	Workers      int           `koanf:"workers"`
+	RetryDelay   time.Duration `koanf:"retry_delay"`
+	CompletedTTL time.Duration `koanf:"completed_ttl"`
+	FailedTTL    time.Duration `koanf:"failed_ttl"`
 }
 
 type RedisConfig struct {

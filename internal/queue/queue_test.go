@@ -31,7 +31,7 @@ func testRedisClient(t *testing.T) *redis.Client {
 
 	t.Cleanup(func() {
 		client.FlushDB(context.Background())
-		client.Close()
+		_ = client.Close()
 	})
 
 	return client

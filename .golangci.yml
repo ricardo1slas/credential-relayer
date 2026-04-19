@@ -7,6 +7,14 @@ linters:
     - staticcheck
     - unused
     - ineffassign
+    - gosec
+  settings:
+    gosec:
+      # G404 (weak RNG) and G101 (hardcoded creds) are suppressed inline with
+      # `#nosec` + justification; see internal/relay/retry.go and
+      # internal/auth/apikey.go. Keeping them enabled at the linter level so any
+      # *new* occurrence still surfaces.
+      excludes: []
 
 formatters:
   enable:

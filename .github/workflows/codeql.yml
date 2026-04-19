@@ -1,0 +1,39 @@
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "32 8 * * 1"  # Mondays, off-peak
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: analyze (go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: init codeql
+        uses: github/codeql-action/init@v3
+        with:
+          languages: go
+          queries: security-extended,security-and-quality
+      - name: autobuild
+        uses: github/codeql-action/autobuild@v3
+      - name: analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:go"
