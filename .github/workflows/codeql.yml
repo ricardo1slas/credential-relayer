@@ -9,6 +9,7 @@ on:
     - cron: "32 8 * * 1"  # Mondays, off-peak
 
 permissions:
+  actions: read        # CodeQL needs this to fingerprint the workflow run for SARIF.
   contents: read
   security-events: write
 
@@ -27,13 +28,13 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: init codeql
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: go
           queries: security-extended,security-and-quality
       - name: autobuild
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@v4
       - name: analyze
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:go"

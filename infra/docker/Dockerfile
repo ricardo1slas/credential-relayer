@@ -13,7 +13,6 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 COPY cmd ./cmd
 COPY internal ./internal
-COPY pkg ./pkg
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
@@ -24,7 +23,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
         ./cmd/relayer
 
 # ---- Stage 2: runtime ----
-FROM alpine:3.21
+FROM alpine:3.23
 
 RUN apk add --no-cache ca-certificates tzdata curl \
     && addgroup -S relayer \
@@ -33,7 +32,10 @@ RUN apk add --no-cache ca-certificates tzdata curl \
 WORKDIR /app
 
 COPY --from=builder /out/relayer /app/relayer
-COPY configs/config.yaml /app/configs/config.yaml
+# Ship the example config as the default so `docker run` has something to load.
+# Real deployments override this via a volume mount (see infra/docker/docker-compose.yml).
+# The live configs/config.yaml is gitignored and not available at build time in CI.
+COPY configs/config.example.yaml /app/configs/config.yaml
 
 USER 65532:65532
 
