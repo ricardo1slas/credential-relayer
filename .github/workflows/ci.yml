@@ -25,7 +25,9 @@ jobs:
           cache: true
       - uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.1.6
+          # Must be compiled with Go ≥ the version in go.mod. Local is v2.11.4
+          # via brew; pin to match so CI failures mirror local.
+          version: v2.11.4
           args: --timeout=5m
 
   test:

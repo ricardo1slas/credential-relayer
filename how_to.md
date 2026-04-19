@@ -2140,9 +2140,9 @@ Option (2) is what DevSecOps roles actually value. A portfolio project that says
 
 **Goal:** Turn the Phase 5.5 security baseline into an enforceable merge gate -- every PR and every push to `main` runs the same scanners we ran by hand, plus the Go test suite and a Docker build. Nightly cron re-scans the latest base image so CVEs landing upstream can't silently rot our image.
 
-**Status:** COMPLETED -- 3 workflows (`ci.yml`, `security.yml`, `codeql.yml`), Dependabot configured, gosec promoted into `golangci-lint`, all green locally.
+**Status:** COMPLETED -- 2 workflows (`ci.yml`, `security.yml`), Dependabot configured, gosec promoted into `golangci-lint`, all green. CodeQL was evaluated and removed for now (see §10.3); can be re-added when the repo goes public.
 
-### 10.0 Why Split Into Three Workflows
+### 10.0 Why Split Into Two Workflows
 
 One big workflow would have worked, but splitting matches the different audiences and schedules:
 
@@ -2161,21 +2161,14 @@ One big workflow would have worked, but splitting matches the different audience
 │  Fails: CVEs in deps or image, committed secrets,    │
 │         Dockerfile misconfig                         │
 └──────────────────────────────────────────────────────┘
-
-┌────────────────────── codeql.yml ────────────────────┐
-│  Triggers: push + PR + weekly cron                   │
-│  Purpose: deep semantic analysis (security-extended) │
-│  Fails: SARIF findings surface in Security tab       │
-│         (informational; not a merge blocker yet)     │
-└──────────────────────────────────────────────────────┘
 ```
 
 Two reasons to split instead of inline:
 
-1. **Failure clarity.** "CI failed" is unhelpful; "security failed → gitleaks found a new secret" is actionable. A reviewer who sees three separate checks on a PR knows which category to look at.
-2. **Scheduling.** `ci.yml` runs per-push and cancels previous runs via concurrency groups. `security.yml` also runs nightly -- so even if no one pushes for a week, Monday's stand-up discovers "hey, `alpine:3.21.8` dropped a critical CVE." `codeql.yml` runs weekly because CodeQL is slow and the signal-to-noise ratio on a small Go codebase doesn't justify running it on every PR (it's already caught by the two faster workflows).
+1. **Failure clarity.** "CI failed" is unhelpful; "security failed → gitleaks found a new secret" is actionable. A reviewer who sees separate checks on a PR knows which category to look at.
+2. **Scheduling.** `ci.yml` runs per-push and cancels previous runs via concurrency groups. `security.yml` also runs nightly -- so even if no one pushes for a week, Monday's stand-up discovers "hey, `alpine:3.21.8` dropped a critical CVE."
 
-A fourth workflow (CD -- build-and-push to ECR) lands in Phase 8 once AWS exists.
+A third workflow (CD -- build-and-push to ECR) lands in Phase 8 once AWS exists. CodeQL was prototyped and removed (§10.3).
 
 ### 10.1 `ci.yml` -- Correctness
 
@@ -2252,21 +2245,28 @@ Catches things like "no HEALTHCHECK", "running as root", "using `:latest` tag". 
 
 **Nightly cron at 06:17 UTC** re-runs everything even if nothing is pushed. That's the answer to T14 (dependency/image drift) in the security roadmap -- CVEs landing on `alpine:3.21` a week after we last pushed will surface on the next morning's run instead of whenever someone next opens a PR.
 
-### 10.3 `codeql.yml` -- Deep Analysis
+### 10.3 CodeQL -- Prototyped, Removed, Deferred
 
-GitHub-native static analysis with the `security-extended` + `security-and-quality` query suites:
-```yaml
-- uses: github/codeql-action/init@v3
-  with:
-    languages: go
-    queries: security-extended,security-and-quality
-- uses: github/codeql-action/autobuild@v3
-- uses: github/codeql-action/analyze@v3
+An earlier draft included a third workflow, `codeql.yml`, running GitHub's CodeQL with the `security-extended` + `security-and-quality` Go query suites. We removed it during Phase 6 shakedown for one reason: **SARIF upload requires repo-level "Code scanning" to be enabled**, and on a private repo that toggle is gated by GitHub Advanced Security (GHAS). GHAS is a paid add-on; on the current plan the "Set up code scanning" option isn't even visible in Settings.
+
+The scan itself ran fine on the runner -- CodeQL produced a SARIF file. What failed was the upload:
+```
+Code scanning is not enabled for this repository. Please enable code scanning in the repository settings.
 ```
 
-CodeQL runs the Go queries from the CodeQL repo -- substantial overlap with gosec but with different strengths: it's better at taint tracking (can follow a client-supplied string from handler to outbound `http.Do`) and SARIF output integrates into GitHub's Security tab without any extra configuration. Findings are advisory today -- they surface in the Security tab as alerts, not as blocking PR checks -- because CodeQL noise is real on small codebases and we already have three other layers catching the likely issues. If we hit a genuine SSRF or injection regression that CodeQL catches and the others don't, we can flip it to a blocker.
+The decision was pragmatic:
 
-Weekly schedule (Monday 08:32 UTC) because CodeQL is slow enough that running it per-PR would double our CI latency.
+- **Remove the workflow now.** Every push would otherwise show a red `codeql / analyze` check even though the code is fine -- confusing, and it devalues the other (real) failures when they happen.
+- **Keep the supporting things.** Nothing else referenced CodeQL; Dependabot's `codeql-action` bump PR becomes a no-op and can be closed.
+- **Re-add when the repo goes public.** CodeQL is free on public repos. The public-showcase repo planned for Phase 10 gets CodeQL for free. At that point a re-introduced `codeql.yml` lives there, not here.
+
+What we keep without CodeQL:
+- **gosec** via `golangci-lint` -- Go-specific pattern matching (the bulk of what CodeQL would flag).
+- **govulncheck** -- reachability-aware CVE scan, which CodeQL does *not* do (they're complementary).
+- **trivy** -- package and container CVEs.
+- **Manual threat modelling** (`private/security_roadmap.md`) -- the things automated tools miss anyway.
+
+Net cost of removing CodeQL: lower taint-tracking coverage for now. Net benefit: no red checks on every PR from a feature we can't use on this plan. Revisit at Phase 10.
 
 ### 10.4 `dependabot.yml` -- Keep Them Current
 
@@ -2299,7 +2299,7 @@ concurrency:
   cancel-in-progress: true
 ```
 
-- **`contents: read`** is the minimum; CodeQL also needs `security-events: write` to upload SARIF. Every other token surface is denied. This is "principal of least privilege" at the workflow level.
+- **`contents: read`** is the minimum every workflow uses. Every other token surface is denied. This is "principle of least privilege" at the workflow level.
 - **Concurrency groups** cancel superseded runs. If you push three commits in a row, only the last one's CI survives -- saves runner minutes and surfaces the real result faster.
 
 ### 10.6 Branch Protection (Operator-Performed)
@@ -2322,7 +2322,7 @@ Settings → Branches → main → Branch protection rule
   ☑ Do not allow bypassing the above settings
 ```
 
-`codeql / analyze` deliberately **not** required -- see §10.3. Flip it later if we ever want SARIF findings to be blockers.
+CodeQL is not listed -- that workflow was removed in Phase 6 shakedown (see §10.3). Revisit when the repo goes public.
 
 ### 10.7 Local-Parity Commands
 
