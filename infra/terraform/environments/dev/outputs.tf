@@ -22,3 +22,13 @@ output "redis_endpoint" {
 output "log_group" {
   value = module.ecs.log_group_name
 }
+
+output "ecr_repository_url" {
+  description = "Push image tags here. Workflow uses this in deploy.yml."
+  value       = module.ecr.repository_url
+}
+
+output "github_actions_role_arn" {
+  description = "Set as AWS_DEPLOY_ROLE_ARN secret/variable in the GitHub repo."
+  value       = module.github_oidc.role_arn
+}

@@ -47,3 +47,25 @@ module "redis" {
   num_cache_clusters        = 1
   apply_immediately         = true
 }
+
+module "ecr" {
+  source = "../../modules/ecr"
+
+  name = var.name # repo name == env prefix (e.g. "relayer-dev")
+}
+
+module "github_oidc" {
+  source = "../../modules/github_oidc"
+
+  github_owner = var.github_owner
+  github_repo  = var.github_repo
+  allowed_refs = ["ref:refs/heads/main"]
+  role_name    = "${var.name}-github-deploy"
+
+  ecr_repository_arn = module.ecr.repository_arn
+  ecs_cluster_arn    = module.ecs.cluster_arn
+  ecs_service_arn    = "arn:aws:ecs:${var.region}:${data.aws_caller_identity.current.account_id}:service/${module.ecs.cluster_name}/${module.ecs.service_name}"
+  passable_role_arns = [module.ecs.task_role_arn, module.ecs.execution_role_arn]
+}
+
+data "aws_caller_identity" "current" {}

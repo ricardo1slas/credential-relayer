@@ -60,3 +60,15 @@ variable "secrets" {
   type        = map(string)
   default     = {}
 }
+
+variable "github_owner" {
+  description = "GitHub owner (user or org) hosting the repo"
+  type        = string
+  default     = "ricardo1slas"
+}
+
+variable "github_repo" {
+  description = "GitHub repository name"
+  type        = string
+  default     = "private_relayer"
+}

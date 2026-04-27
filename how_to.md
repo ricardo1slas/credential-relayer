@@ -2445,17 +2445,105 @@ make tf-plan-dev   # requires terraform.tfvars + initialized backend
 
 ---
 
-## 12. Phase 8: Continuous Deployment ⬜
+## 12. Phase 8: Continuous Deployment 🚧
 
 **Goal:** Automate deployments from GitHub to ECS.
 
-**Status:** NOT STARTED
+**Status:** DEV PIPELINE SHIPPED. Prod is intentionally deferred — see §12.6.
 
-### Key Design Decisions (Upcoming)
+### 12.1 What Phase 8 Adds
 
-- **OIDC over static credentials**: GitHub Actions assumes an IAM role via OIDC federation. No long-lived AWS access keys stored in GitHub secrets.
-- **Rolling deployment**: ECS replaces tasks one at a time. If the new task fails health checks, the rollout stops. No downtime.
-- **Manual approval for prod**: Dev deploys automatically on merge to main. Prod requires clicking "Approve" in GitHub.
+```
+infra/terraform/modules/
+├── ecr/          # private repo + lifecycle (keep last 10 tagged, expire untagged 7d)
+└── github_oidc/  # OIDC provider + IAM role scoped to ECR push + ECS deploy
+
+.github/workflows/deploy.yml   # build -> push -> render task def -> deploy
+```
+
+The dev env composition wires both modules and exposes two outputs you'll feed to GitHub:
+
+```sh
+terraform -chdir=infra/terraform/environments/dev output ecr_repository_url
+terraform -chdir=infra/terraform/environments/dev output github_actions_role_arn
+```
+
+### 12.2 The Pipeline, End-to-End
+
+```
+push to main
+  │
+  ▼
+[checkout] -> [configure-aws-credentials via OIDC, no secrets]
+  │
+  ▼
+[ECR login] -> [docker build + push]
+  │              tags: :sha-<commit>, :latest
+  ▼
+[describe-task-definition]   pulls current task def JSON
+  │
+  ▼
+[render-task-definition]     swaps the container image to :sha-<commit>
+  │
+  ▼
+[deploy-task-definition]     registers new revision + UpdateService
+  │                          waits for service stability
+  ▼
+[done]                       new tasks healthy on the ALB target group
+```
+
+Two things let this work without Terraform fighting back:
+
+- The ECS module's `lifecycle.ignore_changes = [task_definition, desired_count]` means the deploy can register a new revision without `terraform plan` showing drift later.
+- The deploy IAM role can `RegisterTaskDefinition` and `UpdateService` on *only* the dev cluster + service, plus push to *only* the dev ECR repo, plus `PassRole` only to the task + execution roles created by the ECS module. Anything else is denied.
+
+### 12.3 OIDC, Concretely
+
+GitHub Actions issues a signed JWT identifying the workflow run (repo, ref, event, etc.). AWS STS validates that JWT against the OIDC provider, then the role's trust policy decides whether to issue temporary credentials.
+
+The trust policy in `modules/github_oidc` requires:
+
+- `aud == sts.amazonaws.com` (a literal AWS audience claim — anti-confused-deputy)
+- `sub` matches `repo:ricardo1slas/private_relayer:ref:refs/heads/main`
+
+That last line is the load-bearing one. A fork, a feature branch, or a pull request from elsewhere cannot assume the role even if they somehow run the workflow file.
+
+The OIDC thumbprint hard-coded in the module is the historical Actions OIDC cert thumbprint. AWS no longer validates against it (it validates the cert chain itself), but the field is still required by the API.
+
+### 12.4 ECR Lifecycle ≠ Access Control
+
+Two separate things, frequently conflated:
+
+| Mechanism | Controls | Default |
+|---|---|---|
+| **Lifecycle policy** | How long old images live before deletion (cost/storage) | Keep last 10 tagged + expire untagged after 7 days |
+| **IAM** | *Who* can pull/push (security) | Only the ECS task execution role (pull) and the GitHub deploy role (push) |
+
+The lifecycle policy doesn't make the repo "more private" — it just deletes obsolete images so storage stays free-tier-friendly. Privacy is purely IAM.
+
+### 12.5 Bootstrap (One-Time, Per Account)
+
+Before the first push to `main` can deploy:
+
+1. `terraform apply` the dev env (creates ECR repo, OIDC provider, IAM role, ECS service).
+2. Push a placeholder image so the service can start at least once:
+   ```sh
+   ECR_URL=$(terraform -chdir=infra/terraform/environments/dev output -raw ecr_repository_url)
+   aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "$ECR_URL"
+   docker build -t "$ECR_URL:bootstrap" -f infra/docker/Dockerfile .
+   docker push "$ECR_URL:bootstrap"
+   ```
+   Then `terraform apply` again with `image = "<url>:bootstrap"` so the task def points somewhere real. After this, the service exists and the GitHub workflow can update it.
+3. In GitHub: **Settings → Secrets and variables → Actions → Variables** → add repository variable `AWS_DEPLOY_ROLE_ARN` = the `github_actions_role_arn` output. (It's a *variable*, not a secret — it's not sensitive on its own; what makes it useless to attackers is the OIDC trust policy.)
+
+After step 3, every push to `main` triggers `deploy-dev`.
+
+### 12.6 What Phase 8 Does *Not* Do (Yet)
+
+- **No prod pipeline.** The prod env composition exists from Phase 7 but has no deploy workflow, no ECR repo, no OIDC role. When prod is added, it'll get its own GitHub Environment with a required-reviewer protection rule (free on private repos for select branches/environments).
+- **No tag-based releases.** Every push to `main` deploys to dev. There is no `:v1.2.3` workflow. Adding one is a small follow-up.
+- **No automatic rollback past ECS-native rolling.** ECS will refuse to replace healthy tasks with unhealthy new ones, and the workflow waits for service stability — so a bad deploy fails the workflow and leaves the previous revision live. Smarter rollback (e.g. "if 5xx rate spikes, redeploy previous SHA") is Phase 9 / 10 territory.
+- **No Apply against an account.** The Terraform code is correct; the actual `apply` (and the resulting AWS bill) is your call.
 
 ---
 
