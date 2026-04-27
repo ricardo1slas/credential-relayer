@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+region        = "us-east-1"
+name          = "relayer-dev"
+desired_count = 1
+
+# Replace with your ECR image URI once Phase 8 builds + pushes images.
+image = "123456789012.dkr.ecr.us-east-1.amazonaws.com/relayer:latest"
+
+# Lock the ALB to your IP for dev. Open to the world only if you mean it.
+alb_allowed_cidrs = ["0.0.0.0/0"]
+
+# Map of container env var -> SSM Parameter / Secrets Manager ARN.
+# Example: API key delivered via SSM SecureString.
+# secrets = {
+#   RELAYER_AUTH_API_KEYS_0_KEY = "arn:aws:ssm:us-east-1:123456789012:parameter/relayer/dev/api-key"
+# }

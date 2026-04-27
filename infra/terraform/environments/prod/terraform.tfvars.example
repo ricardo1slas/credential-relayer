@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+region        = "us-east-1"
+name          = "relayer-prod"
+desired_count = 2
+
+image           = "123456789012.dkr.ecr.us-east-1.amazonaws.com/relayer:v1.0.0"
+certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/REPLACE-ME"
+
+# alb_allowed_cidrs = ["203.0.113.0/24"]  # tighten for restricted prod
+
+# secrets = {
+#   RELAYER_AUTH_API_KEYS_0_KEY = "arn:aws:ssm:us-east-1:123456789012:parameter/relayer/prod/api-key"
+# }

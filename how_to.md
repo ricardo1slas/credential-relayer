@@ -2302,27 +2302,37 @@ concurrency:
 - **`contents: read`** is the minimum every workflow uses. Every other token surface is denied. This is "principle of least privilege" at the workflow level.
 - **Concurrency groups** cancel superseded runs. If you push three commits in a row, only the last one's CI survives -- saves runner minutes and surfaces the real result faster.
 
-### 10.6 Branch Protection (Operator-Performed)
+### 10.6 Branch Protection -- Reality Check on the Free Tier
 
-CI being green on a PR only matters if merges require CI to be green. That's a branch-protection setting, not something we can commit:
+CI being green on a PR only matters if merges require CI to be green. That's a branch-protection rule. On the GitHub free tier with a **private** repo, *neither* classic branch protection *nor* the newer rulesets API are available -- both return `403 Upgrade to GitHub Pro or make this repository public to enable this feature`.
 
-```
-Settings → Branches → main → Branch protection rule
-  ☑ Require a pull request before merging
-  ☑ Require status checks to pass before merging
-      Required checks:
-        ci / lint
-        ci / test
-        ci / build
-        security / govulncheck
-        security / gitleaks
-        security / trivy-image
-        security / trivy-config
-  ☑ Require branches to be up to date before merging
-  ☑ Do not allow bypassing the above settings
-```
+So we have three choices:
 
-CodeQL is not listed -- that workflow was removed in Phase 6 shakedown (see §10.3). Revisit when the repo goes public.
+| Option | Cost | Effect |
+|---|---|---|
+| GitHub Pro | $4/mo | Unlocks classic protection + rulesets; required checks enforced by GitHub. |
+| Make the repo public | free | Same unlock + free CodeQL; but Phase 10 owns the public showcase fork, not this repo. |
+| **Self-discipline + free-tier settings** | free | CI still runs, red checks visible on PRs; merging is not machine-blocked. |
+
+We chose option 3 for now. The signal exists; enforcement is human. For a solo portfolio project, this is honest and cheap. When the public showcase repo is forked in Phase 10, protection turns on there for free.
+
+**Free-tier settings that simulate ~80% of branch protection:**
+
+1. **Default to PRs, never push directly to main.** Even solo. It's a habit, and the CI runs on PRs just like on push.
+2. **Settings → General → Pull Requests**: disable "Allow merge commits" and "Allow rebase merging"; keep only "Allow squash merging". Linear history for free.
+3. **Settings → General → Pull Requests**: enable "Automatically delete head branches." Repo stays tidy.
+4. **Settings → Actions → General**: set "Workflow permissions" to **Read repository contents and packages permissions** (default is too wide). Already covered by our per-workflow `permissions:` blocks, but this sets the floor.
+
+**The 7 checks that *would* be required** (for reference if we upgrade later):
+- `lint (golangci-lint)`
+- `test (with redis)`
+- `build (docker image)`
+- `govulncheck (reachable Go CVEs)`
+- `gitleaks (secrets in working tree)`
+- `trivy (image CVEs)`
+- `trivy (Dockerfile + compose misconfigs)`
+
+CodeQL is not listed -- that workflow was removed in Phase 6 shakedown (see §10.3).
 
 ### 10.7 Local-Parity Commands
 
@@ -2380,18 +2390,58 @@ All commands pass. First PR after the initial push is where the remote CI runs f
 
 ---
 
-## 11. Phase 7: AWS Infrastructure with Terraform ⬜
+## 11. Phase 7: AWS Infrastructure with Terraform 🚧
 
 **Goal:** Define all cloud infrastructure as code.
 
-**Status:** NOT STARTED
+**Status:** SCAFFOLDED — modules + dev/prod compositions checked in. Not yet `apply`d against a real account; `terraform.tfvars` and remote-state backend config are user-supplied.
 
-### Key Design Decisions (Upcoming)
+### Layout
 
-- **Fargate over EC2**: No servers to manage. Pay per task. Perfect for a service that scales horizontally.
-- **2 AZs minimum**: AWS requires multi-AZ for high availability. ALB distributes traffic across AZs.
-- **Private subnets for ECS/Redis**: No direct internet access. Outbound traffic goes through NAT gateway. Inbound traffic comes only through the ALB.
-- **Terraform modules**: Reusable components (VPC, ECS, ALB) shared between dev and prod. Different `terraform.tfvars` per environment.
+```
+infra/terraform/
+├── modules/
+│   ├── vpc/      # multi-AZ VPC, public + private subnets, IGW, NAT
+│   ├── alb/      # internet-facing ALB, target group, HTTP/HTTPS listeners
+│   ├── ecs/      # Fargate cluster, task def, service, IAM, log group
+│   └── redis/    # ElastiCache Redis replication group, SG locked to ECS SG
+└── environments/
+    ├── dev/      # 1 task, single NAT, single-node Redis, HTTP-only by default
+    └── prod/     # 2 tasks across AZs, NAT/AZ, Multi-AZ Redis, HTTPS required
+```
+
+### Design Decisions (Realized)
+
+- **Fargate over EC2**: No servers to manage. Pay per task. ARM64 by default for cost.
+- **2 AZs minimum**: ALB requires it; subnets are computed via `cidrsubnet` so you only pass an AZ list.
+- **Private subnets for ECS/Redis**: Tasks have no public IPs. Egress via NAT (one shared in dev, one per AZ in prod). Inbound only through ALB SG.
+- **SG-to-SG references everywhere**: ALB SG → task SG on `:8080`; task SG → Redis SG on `:6379`. No CIDR-based intra-VPC rules.
+- **Terraform modules**: Each env composes the same four modules with different sizing/HA toggles.
+- **Remote state**: `backend "s3" {}` declared but unconfigured — supplied via `terraform init -backend-config=...` so the same code works against any account.
+- **AWS provider pinned to `~> 6.42`** with `.terraform.lock.hcl` committed. Reproducible plans across machines/CI; Dependabot is the only thing that bumps the major.
+- **`ignore_changes` on the ECS service** for `task_definition` and `desired_count`: Phase 8's deploy pipeline owns those; Terraform owns the cluster shape.
+- **Secrets via SSM/Secrets Manager**: Plain env (e.g. `RELAYER_QUEUE_REDIS_ADDR`) goes through `environment`. API keys go through `secrets`, which the execution role is granted `GetParameters`/`GetSecretValue` on.
+- **`readonlyRootFilesystem = true`** in the task def, `drop_invalid_header_fields = true` on the ALB, at-rest encryption always on for Redis. All defenses from Phase 5.5 carry forward.
+- **Container Insights is opt-in (`container_insights_enabled`, default `false`)**. It is *not* in the AWS free tier (~$0.30/metric/month). CloudWatch *Logs* are always wired via the awslogs driver and stay inside the 5 GB/month free tier for this workload. Real metrics + dashboards are deferred to Phase 9.
+- **Redis TLS, end-to-end**: prod sets `transit_encryption_enabled = true` and the env composition passes `RELAYER_QUEUE_REDIS_TLS=true` to the task. The relayer's Redis client (`internal/queue/redis.go`) honors that flag with a TLS 1.2+ config. Dev keeps TLS off.
+
+### Bootstrap
+
+Remote state lives in S3 + DynamoDB. Create the bucket and lock table once per AWS account, then `terraform init` each env with `-backend-config=...`. See `infra/terraform/README.md` for the exact commands.
+
+### Local Verification
+
+```sh
+make tf-fmt        # formats every .tf under infra/terraform
+make tf-validate   # validates dev + prod compositions
+make tf-plan-dev   # requires terraform.tfvars + initialized backend
+```
+
+### What Phase 7 Does *Not* Do
+
+- **Build or push images.** `image` is a string the env passes in. Phase 8 wires ECR + GitHub Actions OIDC and supplies a real digest.
+- **Provision DNS / ACM.** `certificate_arn` is required for prod and assumed to already exist. Route 53 records are out of scope for this phase.
+- **Apply against an account.** This phase ships *code*. The first real `apply` happens after Phase 8 has an image to point at.
 
 ---
 

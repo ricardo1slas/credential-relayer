@@ -6,7 +6,7 @@ configs/config.yaml
 
 # Build output
 bin/
-relayer
+/relayer
 
 # Large installers (never belong in git)
 *.pkg
@@ -22,3 +22,13 @@ relayer
 # Security scanner reports
 trivy-report.json
 gitleaks-report.json
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+infra/terraform/**/terraform.tfvars
+!infra/terraform/**/terraform.tfvars.example
