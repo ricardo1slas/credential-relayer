@@ -51,7 +51,8 @@ module "redis" {
 module "ecr" {
   source = "../../modules/ecr"
 
-  name = var.name # repo name == env prefix (e.g. "relayer-dev")
+  name         = var.name # repo name == env prefix (e.g. "relayer-dev")
+  force_delete = true     # dev only: lets `terraform destroy` clean up images
 }
 
 module "github_oidc" {

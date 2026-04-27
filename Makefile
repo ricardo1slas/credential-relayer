@@ -1,5 +1,5 @@
 .PHONY: build run test lint fmt clean docker-build docker-up docker-down docker-logs docker-ps \
-	tf-fmt tf-validate tf-plan-dev tf-apply-dev tf-plan-prod tf-apply-prod
+	tf-fmt tf-validate tf-plan-dev tf-apply-dev tf-destroy-dev tf-plan-prod tf-apply-prod
 
 APP_NAME := relayer
 BUILD_DIR := bin
@@ -53,6 +53,9 @@ tf-plan-dev:
 
 tf-apply-dev:
 	terraform -chdir=$(TF_DEV) apply
+
+tf-destroy-dev:
+	terraform -chdir=$(TF_DEV) destroy
 
 tf-plan-prod:
 	terraform -chdir=$(TF_PROD) plan

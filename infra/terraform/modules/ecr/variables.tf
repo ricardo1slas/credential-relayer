@@ -15,6 +15,12 @@ variable "untagged_expiry_days" {
   default     = 7
 }
 
+variable "force_delete" {
+  description = "Allow `terraform destroy` to delete the repo even if it contains images. Safe for dev/test, leave false in prod."
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   description = "Tags applied to every resource"
   type        = map(string)

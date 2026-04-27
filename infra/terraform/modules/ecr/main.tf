@@ -15,6 +15,7 @@ locals {
 resource "aws_ecr_repository" "this" {
   name                 = var.name
   image_tag_mutability = "MUTABLE" # so we can move :latest to a newer digest
+  force_delete         = var.force_delete
 
   image_scanning_configuration {
     scan_on_push = true
