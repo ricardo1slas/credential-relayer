@@ -39,6 +39,9 @@ queue:
     addr: "localhost:6379"
     password: ""
     db: 0
+    # Set true when connecting to Redis with in-transit encryption
+    # (e.g. ElastiCache with transit_encryption_enabled).
+    tls: false
   workers: 5
   retry_delay: 30s
   # TTL for completed job metadata. Body is cleared on completion regardless.

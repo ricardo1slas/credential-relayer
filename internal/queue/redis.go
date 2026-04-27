@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"time"
 
@@ -13,14 +14,19 @@ type RedisConfig struct {
 	Addr     string
 	Password string
 	DB       int
+	TLS      bool
 }
 
 func NewRedisClient(cfg RedisConfig, logger zerolog.Logger) (*redis.Client, error) {
-	client := redis.NewClient(&redis.Options{
+	opts := &redis.Options{
 		Addr:     cfg.Addr,
 		Password: cfg.Password,
 		DB:       cfg.DB,
-	})
+	}
+	if cfg.TLS {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	client := redis.NewClient(opts)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

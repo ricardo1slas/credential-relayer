@@ -77,6 +77,7 @@ func main() {
 		Addr:     cfg.Queue.Redis.Addr,
 		Password: cfg.Queue.Redis.Password,
 		DB:       cfg.Queue.Redis.DB,
+		TLS:      cfg.Queue.Redis.TLS,
 	}, logger)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("failed to connect to redis")
