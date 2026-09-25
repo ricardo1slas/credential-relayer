@@ -48,6 +48,19 @@ module "redis" {
   apply_immediately         = true
 }
 
+module "cloudwatch" {
+  source = "../../modules/cloudwatch"
+
+  name                    = var.name
+  region                  = var.region
+  alarm_email             = var.alarm_email
+  alb_arn_suffix          = module.alb.arn_suffix
+  target_group_arn_suffix = module.alb.target_group_arn_suffix
+  ecs_cluster_name        = module.ecs.cluster_name
+  ecs_service_name        = module.ecs.service_name
+  log_group_name          = module.ecs.log_group_name
+}
+
 module "ecr" {
   source = "../../modules/ecr"
 

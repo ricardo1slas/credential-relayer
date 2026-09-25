@@ -61,6 +61,12 @@ variable "secrets" {
   default     = {}
 }
 
+variable "alarm_email" {
+  description = "Email subscribed to the CloudWatch alarm SNS topic. Empty = no subscription."
+  type        = string
+  default     = ""
+}
+
 variable "github_owner" {
   description = "GitHub owner (user or org) hosting the repo"
   type        = string

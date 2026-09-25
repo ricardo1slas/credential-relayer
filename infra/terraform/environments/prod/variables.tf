@@ -10,6 +10,12 @@ variable "name" {
   default     = "relayer-prod"
 }
 
+variable "alarm_email" {
+  description = "Email subscribed to the CloudWatch alarm SNS topic. Empty = no subscription."
+  type        = string
+  default     = ""
+}
+
 variable "availability_zones" {
   description = "AZs to deploy into (>=2)"
   type        = list(string)

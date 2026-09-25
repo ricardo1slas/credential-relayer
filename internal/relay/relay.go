@@ -64,6 +64,7 @@ type Handler struct {
 	cfg      HandlerConfig
 	client   *http.Client
 	logger   zerolog.Logger
+	metrics  Recorder
 }
 
 // allowedMethods is the small, explicit set of HTTP methods we relay. Anything else
@@ -115,6 +116,14 @@ func NewHandler(registry *TargetRegistry, cfg HandlerConfig, logger zerolog.Logg
 		cfg:      cfg,
 		client:   newSafeClient(cfg, logger),
 		logger:   logger,
+		metrics:  nopRecorder{},
+	}
+}
+
+// SetMetrics attaches a metrics recorder. Passing nil keeps the no-op default.
+func (h *Handler) SetMetrics(r Recorder) {
+	if r != nil {
+		h.metrics = r
 	}
 }
 
@@ -326,6 +335,7 @@ func (h *Handler) ExecuteRelay(ctx context.Context, targetName, method, path str
 
 func (h *Handler) relayWithRetries(ctx context.Context, target Target, req RelayRequest) (*http.Response, int, error) {
 	var lastErr error
+	start := time.Now()
 
 	for attempt := 0; attempt <= target.Retries; attempt++ {
 		if attempt > 0 {
@@ -357,9 +367,11 @@ func (h *Handler) relayWithRetries(ctx context.Context, target Target, req Relay
 			continue
 		}
 
+		h.metrics.RecordRelay(target.Name, resp.StatusCode, attempt+1, false, time.Since(start))
 		return resp, attempt + 1, nil
 	}
 
+	h.metrics.RecordRelay(target.Name, 0, target.Retries+1, true, time.Since(start))
 	return nil, target.Retries + 1, fmt.Errorf("all %d attempts failed: %w", target.Retries+1, lastErr)
 }
 

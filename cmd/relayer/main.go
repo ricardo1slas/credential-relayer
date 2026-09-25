@@ -12,6 +12,7 @@ import (
 	"github.com/ricardo1slas/private_relayer/internal/api"
 	"github.com/ricardo1slas/private_relayer/internal/auth"
 	"github.com/ricardo1slas/private_relayer/internal/config"
+	"github.com/ricardo1slas/private_relayer/internal/metrics"
 	"github.com/ricardo1slas/private_relayer/internal/queue"
 	"github.com/ricardo1slas/private_relayer/internal/ratelimit"
 	"github.com/ricardo1slas/private_relayer/internal/relay"
@@ -83,6 +84,13 @@ func main() {
 		logger.Fatal().Err(err).Msg("failed to connect to redis")
 	}
 
+	// Metrics: a private Prometheus registry shared across the relay handler,
+	// worker pool and HTTP middleware. Disabled cleanly when metrics.enabled=false.
+	var m *metrics.Metrics
+	if cfg.Metrics.Enabled {
+		m = metrics.New()
+	}
+
 	// Build queue and worker pool.
 	jobQueue := queue.NewQueue(redisClient, queue.Config{
 		CompletedTTL: cfg.Queue.CompletedTTL,
@@ -95,12 +103,14 @@ func main() {
 		UserAgent:              cfg.Relay.UserAgent,
 		MaxRedirects:           cfg.Relay.MaxRedirects,
 	}, logger)
+	relayHandler.SetMetrics(m)
 
 	workerCfg := queue.WorkerPoolConfig{
 		Workers:    cfg.Queue.Workers,
 		RetryDelay: cfg.Queue.RetryDelay,
 	}
 	workerPool := queue.NewWorkerPool(jobQueue, relayHandler, workerCfg, logger)
+	workerPool.SetMetrics(m)
 
 	router := api.NewRouter(api.RouterDeps{
 		Logger:          logger,
@@ -109,6 +119,7 @@ func main() {
 		Limiter:         limiter,
 		Queue:           jobQueue,
 		RedisClient:     redisClient,
+		Metrics:         m,
 		MaxRequestBytes: cfg.Relay.MaxRequestBytes,
 	})
 
@@ -127,6 +138,26 @@ func main() {
 	go workerPool.Start(ctx)
 	go limiter.StartEviction(ctx, logger)
 
+	// Metrics: serve /metrics on a dedicated port (kept off the public ALB listener,
+	// which only forwards :8080) and poll queue depth into the gauge.
+	var metricsSrv *http.Server
+	if m != nil {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", m.Handler())
+		metricsSrv = &http.Server{
+			Addr:              fmt.Sprintf(":%d", cfg.Metrics.Port),
+			Handler:           mux,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		go func() {
+			logger.Info().Msgf("metrics listening on :%d/metrics", cfg.Metrics.Port)
+			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logger.Error().Err(err).Msg("metrics server error")
+			}
+		}()
+		go pollQueueDepth(ctx, jobQueue, m, logger)
+	}
+
 	// Graceful shutdown on SIGINT/SIGTERM.
 	go func() {
 		sigCh := make(chan os.Signal, 1)
@@ -138,10 +169,35 @@ func main() {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
 		_ = srv.Shutdown(shutdownCtx)
+		if metricsSrv != nil {
+			_ = metricsSrv.Shutdown(shutdownCtx)
+		}
 	}()
 
 	logger.Info().Msgf("listening on :%d", cfg.Server.Port)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Fatal().Err(err).Msg("server error")
+	}
+}
+
+// pollQueueDepth refreshes the queue-depth gauge on a fixed interval. A short
+// timeout per probe keeps a slow/unreachable Redis from blocking the ticker.
+func pollQueueDepth(ctx context.Context, q *queue.Queue, m *metrics.Metrics, logger zerolog.Logger) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			depth, err := q.Depth(probeCtx)
+			cancel()
+			if err != nil {
+				logger.Debug().Err(err).Msg("queue depth probe failed")
+				continue
+			}
+			m.SetQueueDepth(depth)
+		}
 	}
 }

@@ -32,3 +32,13 @@ output "github_actions_role_arn" {
   description = "Set as AWS_DEPLOY_ROLE_ARN secret/variable in the GitHub repo."
   value       = module.github_oidc.role_arn
 }
+
+output "cloudwatch_dashboard" {
+  description = "CloudWatch dashboard name."
+  value       = module.cloudwatch.dashboard_name
+}
+
+output "alarm_sns_topic_arn" {
+  description = "SNS topic alarms publish to. Subscribe via var.alarm_email or manually."
+  value       = module.cloudwatch.sns_topic_arn
+}

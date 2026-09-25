@@ -1,4 +1,5 @@
-.PHONY: build run test lint fmt clean docker-build docker-up docker-down docker-logs docker-ps \
+.PHONY: build run test test-e2e cover lint fmt clean loadtest \
+	docker-build docker-up docker-down docker-logs docker-ps tunnel \
 	tf-fmt tf-validate tf-plan-dev tf-apply-dev tf-destroy-dev tf-plan-prod tf-apply-prod
 
 APP_NAME := relayer
@@ -17,6 +18,15 @@ run:
 test:
 	go test ./... -v
 
+# End-to-end suite. Redis-backed cases self-skip when no Redis is reachable;
+# run `make docker-up` (or a local redis) first to exercise the full flow.
+test-e2e:
+	go test ./test/e2e/... -v
+
+cover:
+	go test ./... -coverprofile=coverage.out
+	go tool cover -func=coverage.out | tail -1
+
 lint:
 	golangci-lint run ./...
 
@@ -24,7 +34,14 @@ fmt:
 	gofmt -w .
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) coverage.out
+
+# Load test against a running instance. Override URL/API key as needed:
+#   make loadtest URL=http://localhost:8080 API_KEY=<revoked-dev-key>
+URL ?= http://localhost:8080
+API_KEY ?= <revoked-dev-key>
+loadtest:
+	./scripts/loadtest.sh $(URL) $(API_KEY)
 
 docker-build:
 	$(COMPOSE) build
@@ -40,6 +57,25 @@ docker-logs:
 
 docker-ps:
 	$(COMPOSE) ps
+
+# Free ephemeral Cloudflare Tunnel exposing the relayer publicly over HTTPS.
+# Requires `cloudflared` installed. Run `make docker-up` first.
+tunnel:
+	cloudflared tunnel --url http://localhost:8080
+
+# Deploy to the Raspberry Pi over Tailscale (rsync + compose build on the Pi).
+# Ports bind to the Pi's tailnet IP only. Set GRAFANA_PASSWORD in the Pi's ~/relayer/infra/docker/.env.
+PI ?= <user>@<pi-host>
+sync-pi:
+	rsync -az --delete --exclude .git --exclude bin --exclude infra/terraform --exclude private \
+		--filter='P configs/config.yaml' --filter='P infra/docker/.env' --include configs/config.yaml --filter=':- .gitignore' ./ $(PI):relayer/
+
+deploy-pi: sync-pi
+	ssh $(PI) 'cd relayer/infra/docker && BIND_IP=$$(tailscale ip -4) docker compose up -d --build'
+
+# Isolated throwaway stack on the Pi; results land in benchmarks/results/.
+bench:
+	./benchmarks/run.sh
 
 tf-fmt:
 	terraform -chdir=$(TF_DIR) fmt -recursive

@@ -10,16 +10,16 @@
 2. [Architecture Overview](#2-architecture-overview)
 3. [Technology Decisions](#3-technology-decisions)
 4. [Phase 1: Project Scaffolding & Local Development](#4-phase-1-project-scaffolding--local-development) ✅
-5. [Phase 2: Core Relay Logic](#5-phase-2-core-relay-logic) ⬜
-6. [Phase 3: Authentication & Rate Limiting](#6-phase-3-authentication--rate-limiting) ⬜
-7. [Phase 4: Redis Queue & Async Processing](#7-phase-4-redis-queue--async-processing) ⬜
-8. [Phase 5: Docker & Docker Compose](#8-phase-5-docker--docker-compose) 🚧
+5. [Phase 2: Core Relay Logic](#5-phase-2-core-relay-logic) ✅
+6. [Phase 3: Authentication & Rate Limiting](#6-phase-3-authentication--rate-limiting) ✅
+7. [Phase 4: Redis Queue & Async Processing](#7-phase-4-redis-queue--async-processing) ✅
+8. [Phase 5: Docker & Docker Compose](#8-phase-5-docker--docker-compose) ✅
 9. [Phase 5.5: Security & Privacy Hardening](#9-phase-55-security--privacy-hardening) ✅
 10. [Phase 6: CI/CD with GitHub Actions](#10-phase-6-cicd-with-github-actions) ✅
-11. [Phase 7: AWS Infrastructure with Terraform](#11-phase-7-aws-infrastructure-with-terraform) ⬜
-12. [Phase 8: Continuous Deployment](#12-phase-8-continuous-deployment) ⬜
-13. [Phase 9: Observability & Alerting](#13-phase-9-observability--alerting) ⬜
-14. [Phase 10: Hardening & Documentation](#14-phase-10-hardening--documentation) ⬜
+11. [Phase 7: AWS Infrastructure with Terraform](#11-phase-7-aws-infrastructure-with-terraform) ✅
+12. [Phase 8: Continuous Deployment](#12-phase-8-continuous-deployment) ✅
+13. [Phase 9: Observability & Alerting](#13-phase-9-observability--alerting) ✅
+14. [Phase 10: Hardening & Documentation](#14-phase-10-hardening--documentation) ✅
 15. [Glossary](#15-glossary)
 
 ---
@@ -176,6 +176,10 @@ Based on [OpenZeppelin Relayer](https://github.com/openzeppelin/openzeppelin-rel
 │  └─────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+> **Current deployment:** AWS credits ran out, so the live target is a Raspberry Pi
+> reached over Tailscale (`deploy.yml` -> `make deploy-pi`; see `docs/pi-deploy.md`).
+> The AWS/Terraform/ECS path below is kept as a manual-only reference (`deploy-aws.yml`).
 
 ### CI/CD Pipeline (Phase 6+8)
 

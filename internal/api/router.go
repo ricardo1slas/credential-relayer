@@ -5,6 +5,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/redis/go-redis/v9"
 	"github.com/ricardo1slas/private_relayer/internal/auth"
+	"github.com/ricardo1slas/private_relayer/internal/metrics"
 	"github.com/ricardo1slas/private_relayer/internal/queue"
 	"github.com/ricardo1slas/private_relayer/internal/ratelimit"
 	"github.com/ricardo1slas/private_relayer/internal/relay"
@@ -18,6 +19,7 @@ type RouterDeps struct {
 	Limiter         *ratelimit.Limiter
 	Queue           *queue.Queue
 	RedisClient     *redis.Client
+	Metrics         *metrics.Metrics
 	MaxRequestBytes int64
 }
 
@@ -27,6 +29,7 @@ func NewRouter(deps RouterDeps) chi.Router {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(requestLogger(deps.Logger))
+	r.Use(metricsMiddleware(deps.Metrics))
 	r.Use(middleware.Recoverer)
 
 	// Health endpoints -- no auth, no rate limiting.

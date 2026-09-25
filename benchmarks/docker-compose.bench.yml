@@ -1,0 +1,35 @@
+# Isolated benchmark stack: relayer + redis + nginx mock upstream.
+# Ports bind to BIND_IP (tailnet IP on the Pi). Run via benchmarks/run.sh.
+name: relayer-bench
+services:
+  mock:
+    image: nginx:alpine   # serves a tiny static page: a fast, constant upstream
+    ports: ["${BIND_IP:-127.0.0.1}:8082:80"]   # direct baseline, bypasses the relayer
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 2s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 10
+  relayer:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile
+    depends_on:
+      mock: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    ports: ["${BIND_IP:-127.0.0.1}:8081:8080"]
+    volumes:
+      - ./config.bench.yaml:/app/configs/config.yaml:ro
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 2s
+      retries: 15

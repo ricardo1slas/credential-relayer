@@ -19,6 +19,7 @@ type WorkerPool struct {
 	handler *relay.Handler
 	cfg     WorkerPoolConfig
 	logger  zerolog.Logger
+	metrics Recorder
 }
 
 func NewWorkerPool(q *Queue, handler *relay.Handler, cfg WorkerPoolConfig, logger zerolog.Logger) *WorkerPool {
@@ -33,6 +34,14 @@ func NewWorkerPool(q *Queue, handler *relay.Handler, cfg WorkerPoolConfig, logge
 		handler: handler,
 		cfg:     cfg,
 		logger:  logger,
+		metrics: nopRecorder{},
+	}
+}
+
+// SetMetrics attaches a metrics recorder. Passing nil keeps the no-op default.
+func (wp *WorkerPool) SetMetrics(r Recorder) {
+	if r != nil {
+		wp.metrics = r
 	}
 }
 
@@ -87,6 +96,7 @@ func (wp *WorkerPool) processJob(ctx context.Context, job *Job, logger zerolog.L
 		if job.Attempts >= job.MaxRetries {
 			logger.Warn().Msg("max retries reached, sending to dead-letter queue")
 			_ = wp.queue.SendToDeadLetter(ctx, job)
+			wp.metrics.RecordJob("dead")
 			return
 		}
 
@@ -103,6 +113,7 @@ func (wp *WorkerPool) processJob(ctx context.Context, job *Job, logger zerolog.L
 
 	_ = wp.queue.MarkCompleted(ctx, job, resp.StatusCode)
 	_ = resp.Body.Close()
+	wp.metrics.RecordJob("completed")
 
 	logger.Info().Int("status", resp.StatusCode).Msg("job completed")
 }
