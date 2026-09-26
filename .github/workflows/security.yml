@@ -33,21 +33,22 @@ jobs:
         run: govulncheck ./...
 
   gitleaks:
-    name: gitleaks (secrets in working tree)
+    name: gitleaks (secrets in history)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: install gitleaks
         run: |
           GL_VERSION=8.30.1
           curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VERSION}/gitleaks_${GL_VERSION}_linux_x64.tar.gz" \
             | tar -xz -C /tmp
           sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
-      # --no-git scans the working tree only. The pre-existing leak in commit
-      # 6943cd8 is tracked as T12b in private/security_roadmap.md and will be
-      # purged from history in Phase 10 when the public showcase repo is forked.
+      # Scans the full git history (checkout above uses fetch-depth: 0). History was
+      # rewritten before the repo went public to remove an early placeholder key (T12b).
       - name: run gitleaks
-        run: gitleaks detect --source . --no-git --redact --exit-code 1
+        run: gitleaks detect --source . --redact --exit-code 1
 
   trivy-image:
     name: trivy (image CVEs)

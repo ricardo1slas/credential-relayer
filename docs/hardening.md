@@ -89,8 +89,8 @@ Not in the script (need your call):
 | # | Feature | Addresses | Size |
 |---|---|---|---|
 | 1 | ✅ **Per-key target allow-list** (`targets:` per key; fails closed; 403 identical for forbidden vs unknown targets) **+ job ownership** (a key can only read jobs it enqueued; others get 404) | API1/API5 (object/function-level authz) | done 2026-09-25 |
-| 2 | **Hash API keys at rest** (SHA-256 of a high-entropy key; compare hashes in constant time) + `expires_at` and multiple active keys for rotation | API2 (broken auth), key hygiene | small |
-| 3 | **Fuzz tests** for `buildTargetURL` and the header filter (`go test -fuzz`) | API7 (SSRF), regression safety | small |
+| 2 | ✅ **Hashed API keys** (`key_sha256`, generate with `make new-key`) + `expires_at` + overlapping keys with one name for rotation; expired and unknown keys are indistinguishable; startup validation | API2 (broken auth), key hygiene | done 2026-09-25 |
+| 3 | ✅ **Fuzz tests** (`internal/relay/fuzz_test.go`): the URL builder held (2.7M execs); the header filter did not: `X_Real_IP`-style names bypassed the deny-list, now folded (`_`->`-`) | API7 (SSRF), API8 | done 2026-09-25 |
 | 4 | **Auth-failure throttling** per source IP + a structured **audit log** (key name, target, allow/deny, never payloads) | API2, API4, detection | small |
 | 5 | **Supply chain in CI**: SBOM (syft), image signing (cosign keyless), build provenance attestation, pin Actions by SHA, Trivy IaC scan | API10 (unsafe consumption), SLSA | medium |
 | 6 | **Distroless/static runtime image** and a `-healthcheck` flag (drops `curl` + alpine from the image) | attack surface | small |
@@ -109,3 +109,9 @@ fuzzing + detection), then 5-6, then 7-8.
 - [Why Docker bypasses UFW](https://dev.to/alanwest/why-docker-bypasses-ufw-and-how-to-actually-lock-it-down-26ep) and [Baeldung](https://www.baeldung.com/linux/docker-container-published-port-ignoring-ufw-rules)
 - [OWASP API Security Top 10 (2023) overview](https://www.wiz.io/academy/api-security/owasp-api-security)
 - [Webhook HMAC + key rotation](https://didit.me/blog/api-security-webhooks-hmac-key-rotation/)
+
+## Key rotation runbook
+1. `make new-key` -> give the key to the client, add the printed `key_sha256` as a **second** entry with the
+   **same `name`** (jobs and scopes follow the name) and set `expires_at` on the old entry.
+2. `make deploy-pi`; switch the client to the new key; after the old key's `expires_at` remove its entry.
+The relayer logs a warning 14 days before any key expires and each time an expired key is presented.

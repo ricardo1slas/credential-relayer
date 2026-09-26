@@ -4,6 +4,10 @@
 
 ---
 
+> **Note:** this is the original phase-by-phase build log. The live deployment later moved from AWS to a Raspberry Pi over Tailscale (see `docs/pi-deploy.md` and `docs/hardening.md`); the AWS sections are kept as the reference path.
+
+---
+
 ## Table of Contents
 
 1. [Project Objective](#1-project-objective)
@@ -1644,7 +1648,7 @@ The step-by-step plan's Phase 5 also includes Prometheus metrics and a Grafana d
 
 ## 9. Phase 5.5: Security & Privacy Hardening ✅
 
-**Goal:** Close the highest-impact application, supply-chain, and privacy risks before CI turns scanners into gates. The full threat model and long-form roadmap live in `private/security_roadmap.md`; this section is the human-readable story of *what was fixed, how, and why*.
+**Goal:** Close the highest-impact application, supply-chain, and privacy risks before CI turns scanners into gates. The full threat model and long-form roadmap live in `docs/security-roadmap.md`; this section is the human-readable story of *what was fixed, how, and why*.
 
 **Status:** COMPLETED -- 14 threats addressed (11 hard fixes + 2 nosec-justified + 1 deferred), 4 new unit tests, baseline scanners still green, end-to-end smoke tests including SSRF/method-abuse/oversized-body attempts behave correctly.
 
@@ -1692,7 +1696,7 @@ If we ever decide user-private is worth committing to, the security roadmap §5 
 
 ### 9.2 The Threat Model (in One Page)
 
-Full version in `private/security_roadmap.md` §2. Brief here, categorised as the security-roadmap doc categorises them:
+Full version in `docs/security-roadmap.md` §2. Brief here, categorised as the security-roadmap doc categorises them:
 
 ```
                     ┌──────────────────┐
@@ -1730,7 +1734,7 @@ Phase 5.5 closes T1 through T11 (minus T6 which is partial -- see §9.10). T12 h
 
 ### 9.3 The Tools We Ran (And What They Actually Caught)
 
-Four scanners, run locally before making any fixes, to set a baseline. Installed via `go install` and Homebrew (`brew install gitleaks trivy`). See `private/security_roadmap.md` §3 for the full tooling table and the per-scanner fail-build thresholds planned for CI.
+Four scanners, run locally before making any fixes, to set a baseline. Installed via `go install` and Homebrew (`brew install gitleaks trivy`). See `docs/security-roadmap.md` §3 for the full tooling table and the per-scanner fail-build thresholds planned for CI.
 
 | Tool | What it is for | Baseline finding | After Phase 5.5 |
 |---|---|---|---|
@@ -2059,7 +2063,7 @@ ReadonlyRootfs = true
 
 ### 9.11 Before / After: Scanner Baseline
 
-All four scanners re-run after the code changes, against the rebuilt container. Results captured in `private/security_roadmap.md` §8 changelog.
+All four scanners re-run after the code changes, against the rebuilt container. Results captured in `docs/security-roadmap.md` §8 changelog.
 
 | Tool | Before Phase 5.5 | After Phase 5.5 | Net change |
 |---|---|---|---|
@@ -2126,7 +2130,7 @@ internal/queue/worker.go                # use MarkCompleted on success
 cmd/relayer/main.go                     # wire new config, start eviction goroutine
 infra/docker/docker-compose.yml         # read_only, cap_drop, security_opt, user: redis
 private/CLAUDE.md                       # reference to security_roadmap.md
-private/security_roadmap.md             # living threat model + tool inventory (new file)
+docs/security-roadmap.md             # living threat model + tool inventory (new file)
 ```
 
 ### 9.14 Why This Order Matters
@@ -2221,7 +2225,7 @@ Unlike `gosec` (pattern match) or `trivy` (package version match), `govulncheck`
 ```yaml
 - run: gitleaks detect --source . --no-git --redact --exit-code 1
 ```
-The `--no-git` flag is the key choice. By default gitleaks scans git history, which would surface the pre-Phase-5.5 dev key in commit `6943cd8` (tracked as T12b in `private/security_roadmap.md`, slated for `git filter-repo` cleanup in Phase 10). `--no-git` limits the scan to what's currently committed in the working tree -- so CI gates *future* secrets without forcing a history-rewrite decision today. If someone adds a new credential in a PR, CI catches it. If someone tries to revive the old one, CI catches it. Both gates, without the cost.
+The `--no-git` flag is the key choice. By default gitleaks scans git history, which would surface the pre-Phase-5.5 dev key in commit `6943cd8` (tracked as T12b in `docs/security-roadmap.md`, slated for `git filter-repo` cleanup in Phase 10). `--no-git` limits the scan to what's currently committed in the working tree -- so CI gates *future* secrets without forcing a history-rewrite decision today. If someone adds a new credential in a PR, CI catches it. If someone tries to revive the old one, CI catches it. Both gates, without the cost.
 
 **`trivy-image`** -- CVE scan of the built container:
 ```yaml
@@ -2268,7 +2272,7 @@ What we keep without CodeQL:
 - **gosec** via `golangci-lint` -- Go-specific pattern matching (the bulk of what CodeQL would flag).
 - **govulncheck** -- reachability-aware CVE scan, which CodeQL does *not* do (they're complementary).
 - **trivy** -- package and container CVEs.
-- **Manual threat modelling** (`private/security_roadmap.md`) -- the things automated tools miss anyway.
+- **Manual threat modelling** (`docs/security-roadmap.md`) -- the things automated tools miss anyway.
 
 Net cost of removing CodeQL: lower taint-tracking coverage for now. Net benefit: no red checks on every PR from a feature we can't use on this plan. Revisit at Phase 10.
 
@@ -2365,7 +2369,7 @@ Deferrals tracked by name so Phase 8 + 10 aren't vague "CD" and "polish" phases 
 
 ### 10.9 What Closed in the Security Roadmap
 
-Phase 6 closes **T14 (dependency + container drift)** in `private/security_roadmap.md`. The controls:
+Phase 6 closes **T14 (dependency + container drift)** in `docs/security-roadmap.md`. The controls:
 - `govulncheck` on every PR and nightly -- new CVEs in reachable Go deps fail the build.
 - `trivy` on every PR and nightly -- new CVEs in the alpine base image or Go binary fail the build.
 - Dependabot -- deps + base image + GHA versions auto-updated weekly; security advisories bypass the schedule.

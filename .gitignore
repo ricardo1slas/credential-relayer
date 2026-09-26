@@ -32,3 +32,6 @@ crash.log
 crash.*.log
 infra/terraform/**/terraform.tfvars
 !infra/terraform/**/terraform.tfvars.example
+
+# Personal notes / AI-assistant context (kept locally, never published)
+/private/

@@ -2,298 +2,179 @@
 
 [![CI](https://github.com/ricardo1slas/private_relayer/actions/workflows/ci.yml/badge.svg)](https://github.com/ricardo1slas/private_relayer/actions/workflows/ci.yml)
 [![Security](https://github.com/ricardo1slas/private_relayer/actions/workflows/security.yml/badge.svg)](https://github.com/ricardo1slas/private_relayer/actions/workflows/security.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/ricardo1slas/private_relayer)](https://goreportcard.com/report/github.com/ricardo1slas/private_relayer)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A production-grade, general-purpose request relayer service written in **Go**. Inspired by [OpenZeppelin Relayer](https://github.com/openzeppelin/openzeppelin-relayer), but designed for broader use: relay HTTP requests, webhooks, and messages between services with built-in authentication, rate limiting, queue management, and observability.
+A self-hosted **HTTP request relayer** written in Go. Clients authenticate with an API key and ask the
+relayer to call a *named* upstream target on their behalf, synchronously (`/relay`) or through a durable
+Redis queue (`/webhook`). The relayer holds the upstream details, enforces who may use which target, and
+adds retries, rate limiting and observability. Inspired by
+[OpenZeppelin Relayer](https://github.com/openzeppelin/openzeppelin-relayer), generalized beyond blockchains.
 
-Deployed on **AWS** using **Terraform**, **Docker/ECS**, **GitHub Actions CI/CD**, and **CloudWatch** for monitoring.
+It doubles as a DevSecOps portfolio project: the interesting parts are the security posture, the
+zero-trust deployment on a Raspberry Pi over Tailscale, and the measured performance work below.
 
-## Architecture
-
-```
-                ┌──────────────┐
-  Clients ────> │   API Gateway │
-                │  (Auth + Rate │
-                │   Limiting)   │
-                └──────┬───────┘
-                       │
-                ┌──────▼───────┐      ┌─────────────┐
-                │  Relayer Core │ ───> │  Redis Queue │
-                │  (Go Service) │      └──────┬──────┘
-                └──────┬───────┘             │
-                       │              ┌──────▼──────┐
-                ┌──────▼───────┐      │   Worker     │
-                │  Target       │      │  (Async Jobs)│
-                │  Endpoints    │      └─────────────┘
-                └──────────────┘
+```mermaid
+flowchart LR
+  C[Client<br/>API key] --> A[Auth<br/>hashed keys, scopes]
+  A --> R[Rate limit<br/>per key]
+  R -->|/relay| H[Relay handler<br/>SSRF guards, retries]
+  R -->|/webhook| Q[(Redis queue)]
+  Q --> W[Worker pool<br/>retry, dead-letter]
+  W --> H
+  H --> T[Upstream targets]
+  H -.metrics.-> P[Prometheus]
+  P --> G[Grafana]
+  P --> AM[Alertmanager<br/>email]
 ```
 
-## Features
+## What it does
 
-- **Request Relaying** -- Forward HTTP requests to configured target endpoints with retries and timeout handling
-- **Webhook Relay** -- Receive, validate, queue, and deliver webhooks with signature verification
-- **Authentication** -- API key and HMAC-based request signing
-- **Rate Limiting** -- Configurable per-client and per-endpoint rate limits
-- **Async Queue** -- Redis-backed job queue for reliable delivery with dead-letter support
-- **Multi-Target Routing** -- Route requests to different backends based on configurable rules
-- **Observability** -- Structured logging, Prometheus metrics, CloudWatch integration
-- **Health Checks** -- Liveness and readiness probes for container orchestration
+- **Relay** (`POST /api/v1/relay`): forwards a request to a configured target with per-target timeout,
+  retries on 5xx and transport errors only (never on 4xx), exponential backoff with jitter.
+- **Async webhooks** (`POST /api/v1/webhook`): returns `202` with a job ID; a worker pool delivers it with
+  retries and a dead-letter state; `GET /api/v1/jobs/{id}` reports status.
+- **Auth**: API keys stored as SHA-256 hashes, optional expiry, overlapping keys for rotation,
+  per-key **target allow-lists**, and job ownership (a key can only read its own jobs).
+- **Rate limiting**: token bucket per API key.
+- **Observability**: structured JSON logs (zerolog), Prometheus metrics on a separate port, a provisioned
+  Grafana dashboard, and Prometheus alert rules delivered by Alertmanager email.
+- **Go SDK** in [`pkg/client`](pkg/client), health/readiness probes, graceful shutdown.
 
-## Tech Stack
+## Security
 
-| Layer              | Technology                          |
-|--------------------|-------------------------------------|
-| Language           | Go                                  |
-| Queue              | Redis                               |
-| Containerization   | Docker                              |
-| Orchestration      | AWS ECS (Fargate)                   |
-| Infrastructure     | Terraform                           |
-| CI/CD              | GitHub Actions                      |
-| Monitoring         | CloudWatch, Prometheus, Grafana     |
-| Secrets            | AWS Secrets Manager                 |
-| Load Balancing     | AWS ALB                             |
-| Networking         | AWS VPC, Security Groups            |
+Threats were modeled first ([`docs/security-roadmap.md`](docs/security-roadmap.md), STRIDE plus privacy) and
+the findings fixed and regression-tested. Highlights:
 
-## Project Structure
+| Area | Control |
+|---|---|
+| SSRF | Target chosen by name, never by URL; client path resolved against the base URL and checked (fuzzed); dial-time resolution blocks private/loopback addresses; redirects capped and re-validated; HTTPS-only targets by default |
+| Request smuggling | Header allow/deny-list that also folds `_` to `-` (a bypass found by fuzzing); hop-by-hop and auth headers never forwarded |
+| AuthN / AuthZ | Hashed keys, constant-time compare, expired and unknown keys indistinguishable; per-key target scopes fail closed; 404 (not 403) on other keys' jobs |
+| Resource limits | Inbound and response body caps, server timeouts, bounded rate-limiter memory |
+| Data at rest | Sensitive headers stripped before jobs are persisted; short TTLs |
+| Supply chain | `govulncheck`, `gosec`, `gitleaks` (full history), Trivy (image and IaC), Dependabot; non-root, read-only, capability-dropped containers |
+| Deployment | Tailscale deny-by-default policy with tests, tag-based access, ephemeral CI nodes, host firewall ([`docs/hardening.md`](docs/hardening.md)) |
 
-```
-private_relayer/
-├── cmd/
-│   └── relayer/              # Application entrypoint
-├── internal/
-│   ├── api/                  # HTTP handlers and middleware
-│   ├── config/               # Configuration loading
-│   ├── queue/                # Redis queue implementation
-│   ├── relay/                # Core relay logic
-│   ├── auth/                 # Authentication middleware
-│   ├── ratelimit/            # Rate limiting
-│   └── metrics/              # Prometheus metrics
-├── pkg/
-│   └── client/               # Reusable client library
-├── infra/
-│   ├── terraform/
-│   │   ├── modules/          # VPC, ECS, ALB, Redis, IAM, CloudWatch
-│   │   ├── environments/
-│   │   │   ├── dev/
-│   │   │   └── prod/
-│   │   └── backend.tf
-│   └── docker/
-│       ├── Dockerfile
-│       └── docker-compose.yml
-├── .github/
-│   └── workflows/
-│       ├── ci.yml            # Lint, test, build
-│       └── cd.yml            # Deploy to ECS
-├── configs/
-│   └── config.yaml           # Relayer configuration
-├── scripts/                  # Helper scripts
-├── go.mod
-├── go.sum
-├── Makefile
-└── README.md
-```
+Report vulnerabilities privately: see [`SECURITY.md`](SECURITY.md).
 
-## Getting Started
+## Performance
 
-### Prerequisites
-
-- Go 1.22+
-- Docker & Docker Compose
-- Redis
-- AWS CLI (for deployment)
-- Terraform 1.5+ (for infrastructure)
-
-### Local Development
-
-```bash
-# Clone the repo
-git clone https://github.com/ricardo1slas/private_relayer.git
-cd private_relayer
-
-# Copy and edit configuration
-cp configs/config.example.yaml configs/config.yaml
-
-# Start dependencies
-docker compose up -d redis
-
-# Run the service
-make run
-
-# Run tests
-make test
-```
-
-The API will be available at `http://localhost:8080`.
-
-### Docker
-
-```bash
-make docker-up   # relayer + redis + prometheus + grafana
-```
-
-This brings up the full local stack:
-
-| Service | URL | Notes |
-|---|---|---|
-| Relayer API | http://localhost:8080 | `/health`, `/ready`, `/api/v1/*` |
-| Relayer metrics | http://localhost:9090/metrics | Prometheus exposition |
-| Prometheus | http://localhost:9091 | scrapes the relayer |
-| Grafana | http://localhost:3000 | admin/admin; "Private Relayer" dashboard auto-provisioned |
-
-### Self-Hosting (Raspberry Pi / any Linux box)
-
-You don't need AWS to run this. The `docker-compose.yml` above is the full
-self-hosted stack — including Prometheus + Grafana, which are the same
-observability the AWS CloudWatch setup provides. Every image is multi-arch, so
-`make docker-up` works unchanged on an ARM Pi.
-
-Requirements: Raspberry Pi 4 or 5, 64-bit Raspberry Pi OS, 2 GB+ RAM, Docker.
-(The four services cap at ~1.5 GB combined via `mem_limit`. A Pi Zero / 32-bit
-OS won't work.)
-
-```bash
-make docker-up      # same command as on any machine
-```
-
-**Pi over Tailscale (what this repo's CI does):** `make deploy-pi` rsyncs the repo
-and runs compose on the Pi, binding all ports to its tailnet IP only. Every push
-to `main` deploys automatically. Setup and ACL: [`docs/pi-deploy.md`](docs/pi-deploy.md).
-
-To expose it to the internet without opening a port on your router, use a free
-[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
-(install `cloudflared` first):
-
-```bash
-make tunnel         # prints a public HTTPS URL for the relayer on :8080
-```
-
-Only expose the relayer (`:8080`). Never expose Redis (`:6379`).
-
-> The `infra/terraform/` and CloudWatch modules stay in the repo as a reference
-> AWS deployment — they demonstrate the cloud path without you having to `apply`
-> (and pay for) it.
-
-### Performance
-
-Measured on a Raspberry Pi 4 (4 cores) with a local upstream, load from a Mac over Tailscale
-(`make bench`, details in [`benchmarks/`](benchmarks/README.md)):
+Measured on a **Raspberry Pi 4** (4 cores) against a local upstream, load generated over Tailscale
+(`make bench`; method and raw results in [`benchmarks/`](benchmarks/README.md)):
 
 | Scenario | req/s | p50 | p95 |
 |---|---|---|---|
-| relay, 50 concurrent | 976 | 46 ms | 98 ms |
-| relay, 200 concurrent | 1048 | 168 ms | 409 ms |
+| Relay, 50 concurrent | 976 | 46 ms | 98 ms |
+| Relay, 200 concurrent | 1048 | 168 ms | 409 ms |
 
-A CPU profile (pprof) showed ~80% of time dialing new TCP connections: the per-request
-timeout context was cancelled before the response body was read, so net/http discarded every
-connection. Cancelling on `Body.Close()` instead took 200-concurrency throughput from 282 to
-1048 req/s (3.7x); a regression test pins the behaviour.
+A CPU profile (`pprof`) showed ~80% of time spent dialing new TCP connections: the per-request timeout
+context was cancelled before the response body was read, so `net/http` discarded every connection.
+Cancelling on `Body.Close()` instead took 200-concurrency throughput from **282 to 1048 req/s (3.7x)**
+and p95 from 1.95 s to 0.41 s. A regression test pins the behaviour.
 
-### Alerting & security
+## Quick start
 
-Prometheus rules (5xx rate, latency, upstream failures, queue backlog, dead-lettered jobs, auth-failure
-and rate-limit spikes) route through Alertmanager to email. Hardening notes, the Tailscale deny-by-default
-policy, and the app-security roadmap live in [`docs/hardening.md`](docs/hardening.md).
-
-### Deploy to AWS
+Requires Go 1.26+ and Docker.
 
 ```bash
-cd infra/terraform/environments/dev
-terraform init
-terraform plan
-terraform apply
+cp configs/config.example.yaml configs/config.yaml   # set a real key: make new-key
+make docker-up          # relayer + redis + prometheus + alertmanager + grafana
 ```
 
-## Configuration
+| Service | URL |
+|---|---|
+| Relayer API | http://localhost:8080 |
+| Prometheus / Alertmanager | http://localhost:9091 / http://localhost:9093 |
+| Grafana | http://localhost:3000 (`admin` / `admin`, dashboard "Private Relayer") |
 
-Configuration is loaded from `configs/config.yaml` and environment variables.
+```bash
+# relay synchronously
+curl -X POST localhost:8080/api/v1/relay \
+  -H "X-API-Key: <your-api-key>" -H "Content-Type: application/json" \
+  -d '{"target":"httpbin","method":"GET","path":"/get"}'
+
+# queue a webhook, then poll the job
+curl -X POST localhost:8080/api/v1/webhook -H "X-API-Key: <your-api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"target":"httpbin","method":"POST","path":"/post","body":{"hello":"world"}}'
+curl localhost:8080/api/v1/jobs/<job_id> -H "X-API-Key: <your-api-key>"
+```
+
+`make traffic` sends a steady mix of requests (successes, 4xx/5xx, auth failures, bursts) so the
+dashboard has something to show.
+
+### Configuration
+
+`configs/config.yaml` plus `RELAYER_*` environment overrides (`RELAYER_SERVER_PORT` -> `server.port`).
 
 ```yaml
-server:
-  port: 8080
-  read_timeout: 10s
-  write_timeout: 10s
-
 auth:
   api_keys:
-    - name: "default"
-      key: "${API_KEY}"
-
+    - name: "phone"
+      key_sha256: "<make new-key prints this>"   # or `key:` for dev only
+      expires_at: "2027-03-01"                   # optional
+      targets: ["httpbin"]                       # least privilege; [] or ["*"] = all
+rate_limit: { requests: 100, window: 60s }
 relay:
   targets:
-    - name: "service-a"
-      url: "https://api.example.com"
-      timeout: 5s
-      retries: 3
-      rate_limit:
-        requests: 100
-        window: 60s
-
+    - { name: "httpbin", url: "https://httpbin.org", timeout: 5s, retries: 3 }
 queue:
-  redis:
-    addr: "localhost:6379"
-    db: 0
+  redis: { addr: "localhost:6379" }
   workers: 5
-  retry_delay: 30s
-  max_retries: 3
-  dead_letter: true
-
-metrics:
-  enabled: true
-  port: 9090
+metrics: { enabled: true, port: 9090 }     # /metrics is served here, not on the API port
 ```
 
-## API
-
-| Method | Endpoint              | Description                    |
-|--------|-----------------------|--------------------------------|
-| POST   | `/api/v1/relay`       | Relay a request to a target    |
-| POST   | `/api/v1/webhook`     | Receive and queue a webhook    |
-| GET    | `/api/v1/jobs/:id`    | Check job status               |
-| GET    | `/health`             | Liveness probe                 |
-| GET    | `/ready`              | Readiness probe                |
-| GET    | `/metrics`            | Prometheus metrics             |
-
-## Client SDK
-
-A dependency-free Go client lives in [`pkg/client`](pkg/client):
+### Go SDK
 
 ```go
-import "github.com/ricardo1slas/private_relayer/pkg/client"
-
-c := client.New("https://relayer.example.com", os.Getenv("RELAYER_API_KEY"))
-
-// Synchronous relay
-resp, err := c.Relay(ctx, client.RelayRequest{
-    Target: "httpbin", Method: "GET", Path: "/get",
-})
-
-// Async (queued) relay + status poll
+c := client.New("http://localhost:8080", apiKey)
+resp, err := c.Relay(ctx, client.RelayRequest{Target: "httpbin", Method: "GET", Path: "/get"})
 jobID, err := c.Webhook(ctx, client.WebhookRequest{Target: "httpbin", Method: "POST", Path: "/post"})
-job, err := c.JobStatus(ctx, jobID)
 ```
 
-Non-2xx responses come back as a typed `*client.APIError` carrying the status
-code and server message.
+## Deployment
 
-## Monitoring
+**Live: Raspberry Pi over Tailscale.** `make deploy-pi` (or a push to `main`, via a GitHub Actions runner that
+joins the tailnet as an ephemeral, tagged node) rsyncs the repo and runs Docker Compose on the Pi. Every port
+binds to the Pi's tailnet address only. Setup, ACL policy and email alerts: [`docs/pi-deploy.md`](docs/pi-deploy.md).
 
-- **Prometheus** metrics on a dedicated port (`:9090/metrics`, kept off the public ALB):
-  request counts, latency histograms, relay outcomes per target, queue depth, jobs processed.
-- **Grafana** dashboard (auto-provisioned in the local stack) for request rate, error rate,
-  latency percentiles, and queue depth.
-- **CloudWatch** dashboard + alarms (5xx rate, p95 latency, unhealthy hosts, ECS CPU/memory,
-  error-log rate) wired to an **SNS** topic for email alerts — see `infra/terraform/modules/cloudwatch`.
-- **Structured logging** in JSON (zerolog) for CloudWatch Logs ingestion and metric filters.
+**Reference: AWS via Terraform.** [`infra/terraform`](infra/terraform) defines a VPC, ALB, ECS Fargate service,
+ElastiCache Redis, ECR, CloudWatch dashboard and alarms, and a GitHub OIDC role (no long-lived AWS keys).
+The AWS deploy workflow is manual-only.
 
-See [`docs/runbook.md`](docs/runbook.md) for deploy, rollback, alarm response, and troubleshooting.
+Operations: [`docs/runbook.md`](docs/runbook.md). Hardening and the security backlog: [`docs/hardening.md`](docs/hardening.md).
+
+## Project layout
+
+```
+cmd/relayer/          entrypoint
+internal/api/         router, middleware, webhook and job handlers
+internal/auth/        API-key auth, scopes
+internal/relay/       relay logic, SSRF-hardened HTTP client, retries (+ fuzz tests)
+internal/queue/       Redis queue, worker pool, job model
+internal/ratelimit/   token bucket
+internal/metrics/     Prometheus metrics
+internal/config/      YAML + env config
+pkg/client/           Go SDK
+test/e2e/             black-box tests through the real router
+benchmarks/           isolated benchmark stack and results
+infra/docker/         Dockerfile, Compose, Prometheus, Alertmanager, Grafana
+infra/terraform/      AWS modules and environments
+.github/workflows/    ci, security, deploy (Pi), deploy-aws (manual)
+```
+
+## Development
+
+```bash
+make test        # unit + e2e (Redis-backed cases skip if Redis is down)
+make lint        # golangci-lint
+make bench       # benchmark suite on the Pi
+go test ./internal/relay -fuzz=FuzzHeaderFilter -fuzztime=30s
+```
+
+`how_to.md` is the long-form build log written phase by phase (it predates the Pi deployment, so its
+deployment sections describe the AWS path).
 
 ## License
 
-MIT
-
-## Author
-
-**Ricardo Islas Guerra** -- Cloud & DevOps Engineer
-- Portfolio: [rickypedia](https://ricardo1slas.github.io/rickypedia/)
-- GitHub: [@ricardo1slas](https://github.com/ricardo1slas)
+[MIT](LICENSE)
