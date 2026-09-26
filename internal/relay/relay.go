@@ -477,8 +477,15 @@ func buildTargetURL(base *url.URL, clientPath string) (string, error) {
 // isHeaderAllowed decides whether to forward a client-supplied header.
 // Denied: hop-by-hop, auth, and connection-affecting headers (always blocked).
 // Identity headers (User-Agent, Referer, ...) are blocked unless preserveIdentity is true.
+// foldHeaderName lower-cases and folds "_" to "-" (and trims spaces). CGI/WSGI-style backends
+// read X_Real_IP as X-Real-IP, so the deny-list must match the folded form or a client can
+// smuggle a denied header past it. Found by FuzzHeaderFilter.
+func foldHeaderName(name string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), "_", "-")
+}
+
 func isHeaderAllowed(name string, preserveIdentity bool) bool {
-	lc := strings.ToLower(name)
+	lc := foldHeaderName(name)
 	if _, blocked := deniedRequestHeaders[lc]; blocked {
 		return false
 	}
@@ -496,7 +503,7 @@ func StripSensitiveHeaders(h map[string]string) map[string]string {
 	}
 	out := make(map[string]string, len(h))
 	for k, v := range h {
-		lc := strings.ToLower(k)
+		lc := foldHeaderName(k)
 		if _, blocked := deniedRequestHeaders[lc]; blocked {
 			continue
 		}
