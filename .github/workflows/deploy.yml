@@ -1,15 +1,19 @@
 name: deploy-pi
 
-# Auto-deploy to the Raspberry Pi on every push to main, over Tailscale.
+# Auto-deploy to the Raspberry Pi after ci passes on a push to main, over Tailscale.
+# A failing test or lint never reaches the Pi; `security` stays non-blocking (a CVE
+# published overnight shouldn't freeze deploys) and fails loudly on its own.
 # The runner joins the tailnet as tag:ci (ephemeral) and runs `make deploy-pi`
 # (rsync + docker compose up --build on the Pi). Auth is Tailscale SSH: the
 # policy must grant tag:ci -> tag:pi (tcp:22, tcp:8080) and an ssh accept rule.
 # See docs/hardening.md for the exact policy. PI_HOST defaults to the Pi's tailnet IP
 # (no MagicDNS dependency on the runner).
 on:
-  push:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
     branches: [main]
-  workflow_dispatch:
+  workflow_dispatch: # manual escape hatch; deploys the selected ref without waiting for ci
 
 permissions:
   contents: read
@@ -21,11 +25,33 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: github.repository == 'ricardo1slas/private_relayer'
+    # workflow_run's branch filter matches a fork PR's branch named "main" too, and this job
+    # holds the tailnet secrets: only deploy a successful ci run from a push to this repo.
+    if: >-
+      github.repository == 'ricardo1slas/private_relayer' && (
+        github.event_name == 'workflow_dispatch' || (
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.head_repository.full_name == github.repository))
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Deploy exactly the commit ci tested, not whatever main points to now.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      # ci runs can finish out of order; an older commit's success must not roll the Pi back.
+      - name: Skip if a newer commit is on main
+        id: fresh
+        run: |
+          if [ "${{ github.event_name }}" = workflow_dispatch ] || [ "$(git rev-parse origin/main)" = "$(git rev-parse HEAD)" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::main moved past $(git rev-parse --short HEAD); its own ci run will deploy"
+          fi
 
       - name: Connect to tailnet
+        if: steps.fresh.outputs.deploy == 'true'
         uses: tailscale/github-action@v4
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
@@ -33,17 +59,20 @@ jobs:
           tags: tag:ci
 
       - name: Trust Pi host key (Tailscale SSH, identity-authenticated)
+        if: steps.fresh.outputs.deploy == 'true'
         run: |
           mkdir -p ~/.ssh
           printf 'Host *\n  StrictHostKeyChecking accept-new\n' > ~/.ssh/config
 
       - name: Deploy
+        if: steps.fresh.outputs.deploy == 'true'
         run: make deploy-pi PI=<pi-user>@${{ vars.PI_HOST || '<pi-tailnet-ip>' }}
 
       - name: Smoke test
+        if: steps.fresh.outputs.deploy == 'true'
         run: |
           host=${{ vars.PI_HOST || '<pi-tailnet-ip>' }}
-          for i in $(seq 10); do
+          for _ in $(seq 10); do
             curl -fsS -m 5 http://$host:8080/ready && exit 0
             sleep 3
           done

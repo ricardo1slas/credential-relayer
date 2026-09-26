@@ -161,7 +161,7 @@ jobID, err := c.Webhook(ctx, client.WebhookRequest{Target: "httpbin", Method: "P
 
 ## Deployment
 
-**Live: Raspberry Pi over Tailscale.** `make deploy-pi` (or a push to `main`, via a GitHub Actions runner that
+**Live: Raspberry Pi over Tailscale.** `make deploy-pi` (or a push to `main` once `ci` passes, via a GitHub Actions runner that
 joins the tailnet as an ephemeral, tagged node) rsyncs the repo and runs Docker Compose on the Pi. Every port
 binds to the Pi's tailnet address only. Setup, ACL policy and email alerts: [`docs/pi-deploy.md`](docs/pi-deploy.md).
 

@@ -22,8 +22,12 @@ make deploy-pi PI=user@host
 ```
 
 ## CI deploy (`.github/workflows/deploy.yml`)
-Every push to `main` joins the tailnet as an ephemeral `tag:ci` node and runs
-`make deploy-pi`, then curls `/ready`.
+When `ci` succeeds on a push to `main`, the deploy joins the tailnet as an ephemeral `tag:ci`
+node, checks out exactly the commit `ci` tested, runs `make deploy-pi`, then curls `/ready`.
+A failing test never deploys. If `main` has already moved on, the older run skips so the Pi
+never rolls back. `security` doesn't block deploys. Actions → deploy-pi → "Run workflow"
+deploys manually without waiting for `ci`. Fork PRs can't trigger it: the job requires a `push` event from
+this repo.
 
 Tailscale admin setup (once), full policy JSON in [`hardening.md`](hardening.md#2-tailscale-deny-by-default-policy):
 1. Add `tag:pi` / `tag:ci` to `tagOwners`, the grants and ssh rules, then on the Pi:
