@@ -1747,7 +1747,7 @@ Four scanners, run locally before making any fixes, to set a baseline. Installed
 
 ### 9.4 Fix Group A -- Repo Hygiene (T5, T12)
 
-**Problem.** `configs/config.yaml` was tracked and contained `key: "<revoked-dev-key>"` -- a real-looking API key anyone cloning the repo would see and could potentially reach across deployments if the value was reused. The committed `relayer` binary (10 MB) had unverifiable provenance. `AWSCLIV2.pkg` (55 MB) was an installer blob that had no business being in a Git history.
+**Problem.** `configs/config.yaml` was tracked and contained `key: "<revoked dev key>"` -- a real-looking API key anyone cloning the repo would see and could potentially reach across deployments if the value was reused. The committed `relayer` binary (10 MB) had unverifiable provenance. `AWSCLIV2.pkg` (55 MB) was an installer blob that had no business being in a Git history.
 
 **Fix.**
 
@@ -1762,7 +1762,7 @@ relayer
 *.pkg
 ```
 
-`how_to.md` curl examples changed from `-H "X-API-Key: <revoked-dev-key>"` to `-H "X-API-Key: $API_KEY"` so reviewers copy-paste a placeholder, not a real-looking secret. `configs/config.example.yaml` retains `replace-me-with-a-random-secret` to signal "this is a placeholder."
+`how_to.md` curl examples changed from `-H "X-API-Key: <revoked dev key>"` to `-H "X-API-Key: $API_KEY"` so reviewers copy-paste a placeholder, not a real-looking secret. `configs/config.example.yaml` retains `replace-me-with-a-random-secret` to signal "this is a placeholder."
 
 **What's still flagged.** Gitleaks still finds 2 matches because the old commit `6943cd8` contains the key in `how_to.md` history. Rewriting history (via `git filter-repo --replace-text`) is a Phase 10 task tied to publishing the public showcase repo -- doing it now would force-push private history, which is acceptable but premature. The working tree is clean, so regressions from this point forward are preventable by CI.
 

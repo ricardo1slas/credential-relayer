@@ -1,0 +1,7 @@
+# Historic findings for a secret that has been revoked. Ignore by fingerprint only, never by
+# rule or path, so any new leak still fails CI.
+#
+# dev-client API key in curl examples (commit 6943cd8). Revoked 2026-09-26: dev-client now
+# uses a new key stored as key_sha256; the old value gets 401 on the live relayer.
+6943cd85778788bd0dd1cba7c74a2469454a90d7:how_to.md:curl-auth-header:1130
+6943cd85778788bd0dd1cba7c74a2469454a90d7:how_to.md:curl-auth-header:1455

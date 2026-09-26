@@ -45,8 +45,8 @@ jobs:
           curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VERSION}/gitleaks_${GL_VERSION}_linux_x64.tar.gz" \
             | tar -xz -C /tmp
           sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
-      # Scans the full git history (checkout above uses fetch-depth: 0). History was
-      # rewritten before the repo went public to remove an early placeholder key (T12b).
+      # Scans the full git history (checkout above uses fetch-depth: 0). Findings for revoked
+      # secrets are ignored by fingerprint in .gitleaksignore (T12b), so new leaks still fail.
       - name: run gitleaks
         run: gitleaks detect --source . --redact --exit-code 1
 

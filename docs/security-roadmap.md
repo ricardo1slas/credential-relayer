@@ -24,7 +24,7 @@ Last baseline: 2026-04-18. 2026-09-25: govulncheck CI failed on Go 1.26.2 stdlib
 | T10 Metadata in logs | MED | ✅ fixed |
 | T11 Client identity leak | MED | ✅ fixed |
 | T12a Committed binaries removed | MED | ✅ fixed |
-| T12b Git history purge | MED | ⏳ deferred -- Phase 10 (public showcase) |
+| T12b Dev key in git history | MED | ✅ mitigated 2026-09-26: the history was never actually rewritten, and the history scan caught it. The key was still live as `dev-client`; it's now rotated (hashed replacement; the old value gets 401), redacted from current docs, and its 2 historic findings are ignored by fingerprint in `.gitleaksignore`. A `git filter-repo` purge is optional cosmetics now that the value is dead |
 | T13 Error message leakage | LOW | ⏳ deferred -- Phase 10 |
 | T14 Dependency/image drift | LOW→MED | ✅ fixed (Phase 6: govulncheck + trivy on PR + nightly, Dependabot weekly) |
 | gosec G101 (header name) | FP | ✅ nosec |
@@ -116,7 +116,7 @@ No method allowlist. `CONNECT`, `TRACE`, `OPTIONS` accepted. `CONNECT` to a non-
 
 ### T5. Weak secret posture -- **HIGH**
 *Category: Information disclosure.*
-- `configs/config.yaml` ships with a real-looking API key `<revoked-dev-key>` and is tracked in git.
+- `configs/config.yaml` ships with a real-looking API key `<revoked dev key>` and is tracked in git.
 - Same value appears in `how_to.md` in curl examples (flagged by gitleaks, see §6).
 - `configs/config.example.yaml` also has a placeholder, but the example and the live file coexist, so committing changes to config.yaml is easy to forget.
 - No support yet for loading keys from Secrets Manager / env-file / SOPS.
@@ -312,7 +312,7 @@ No true positives. Note: gosec did **not** flag the SSRF/header-injection patter
 ### 6.3 gitleaks
 **2 findings, 1 unique secret.**
 
-Both findings are the same dev API key (`<revoked-dev-key>`) appearing in `how_to.md` in curl examples (lines 1130 and 1455). The same value also lives in `configs/config.yaml` (gitleaks didn't flag the YAML because the rule is `curl-auth-header`). This matches T5 + T12 in the threat model.
+Both findings are the same dev API key (`<revoked dev key>`) appearing in `how_to.md` in curl examples (lines 1130 and 1455). The same value also lives in `configs/config.yaml` (gitleaks didn't flag the YAML because the rule is `curl-auth-header`). This matches T5 + T12 in the threat model.
 
 Fix:
 - Remove `configs/config.yaml` from tracking (`git rm --cached`).
@@ -363,3 +363,4 @@ Before we execute Phase 5.5, decide:
 | 2026-04-18 | phase 5.5 | Closed T1 (SSRF via URL concat), T1b (private-IP dial filter), T2 (header allow/deny), T3 (method allowlist), T4a (inbound body cap), T4b (response body cap), T4c (rate-limit eviction), T5 (removed dev key from tracked config + docs), T7 (HTTPS enforcement on target URLs), T8 (nosec G404 with justification), T9 (headers scrubbed at webhook boundary + 1h TTL for completed jobs + body/headers cleared on completion), T10 (log route pattern not concrete path), T11 (outbound UA rewrite, Referer/Forwarded/Via stripped), G101 (nosec for header-name constant). Container hardened: read_only, cap_drop [ALL], no-new-privileges, tmpfs /tmp + /run, mem_limit, pids_limit. Added 6 new unit tests (31 total, all passing). Scanner deltas: gosec 2→0, gitleaks working-tree 2→0 (history-purge deferred to Phase 10). Partial: T6 (RealIP trust) -- deferred to Phase 7 once ALB CIDR is known. Not started: T12b history purge (Phase 10), T13 error-message tightening (Phase 10), T14 continuous drift scanning (Phase 6). |
 | 2026-04-18 | phase 6 | Closed T14 via CI: two workflows (`ci.yml`, `security.yml`) + `dependabot.yml`. `security.yml` runs govulncheck + gitleaks (`--no-git`) + trivy image + trivy config on every PR and nightly (06:17 UTC cron), failing on HIGH/CRITICAL. `ci.yml` runs golangci-lint (now including gosec), `go test -race` with Redis service, and Docker build with GHA cache. Dependabot bumps gomod/docker/github-actions weekly. All workflows validated with actionlint; all local scanner commands green. Branch protection required checks documented in how_to.md §10.6. Not yet: CD pipeline (Phase 8), SBOM publication (Phase 10), ECR push (Phase 8). |
 | 2026-04-19 | phase 6 fixup | Fixed CI on first push: bumped action versions (golangci-lint-action v6→v8, trivy-action 0.28.0→0.35.0, setup-buildx v3→v4, build-push v6→v7), pinned golangci-lint binary to v2.11.4 (v2.1.6 was compiled with Go 1.24, couldn't parse go.mod's 1.26.2), fixed Dockerfile CI build (dropped empty pkg/ copy, renamed configs/config.yaml copy to use config.example.yaml since live config is gitignored), bumped alpine 3.21→3.23. Removed `codeql.yml`: SARIF upload requires GitHub Advanced Security on private repos, not available on this plan. Trade: lost CodeQL's taint tracking; kept gosec + govulncheck + trivy + gitleaks. Re-add CodeQL in Phase 10 public showcase repo (free on public). |
+| 2026-09-26 | credential injection | Added T15 (per-target `secret_headers`). The first full-history gitleaks run on CI flagged T12b: the dev key in `6943cd8` was still the live `dev-client` key. Rotated to a hashed key, redacted from docs, historic fingerprints added to `.gitleaksignore`. |
