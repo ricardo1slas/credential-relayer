@@ -33,6 +33,9 @@ flowchart LR
   retries on 5xx and transport errors only (never on 4xx), exponential backoff with jitter.
 - **Async webhooks** (`POST /api/v1/webhook`): returns `202` with a job ID; a worker pool delivers it with
   retries and a dead-letter state; `GET /api/v1/jobs/{id}` reports status.
+- **Credential injection**: a target's upstream secrets (API keys, bearer tokens) live only on the relayer
+  and are added to every outbound request. Clients name the target and never see, override or
+  exfiltrate the secret.
 - **Auth**: API keys stored as SHA-256 hashes, optional expiry, overlapping keys for rotation,
   per-key **target allow-lists**, and job ownership (a key can only read its own jobs).
 - **Rate limiting**: token bucket per API key.
@@ -48,6 +51,7 @@ the findings fixed and regression-tested. Highlights:
 | Area | Control |
 |---|---|
 | SSRF | Target chosen by name, never by URL; client path resolved against the base URL and checked (fuzzed); dial-time resolution blocks private/loopback addresses; redirects capped and re-validated; HTTPS-only targets by default |
+| Upstream secrets | Loaded from env at startup, never from YAML or client input; injected last so clients can't override them (including `_`-folded spellings); dropped on cross-host or scheme-changing redirects; redacted if the upstream echoes them; never written to Redis |
 | Request smuggling | Header allow/deny-list that also folds `_` to `-` (a bypass found by fuzzing); hop-by-hop and auth headers never forwarded |
 | AuthN / AuthZ | Hashed keys, constant-time compare, expired and unknown keys indistinguishable; per-key target scopes fail closed; 404 (not 403) on other keys' jobs |
 | Resource limits | Inbound and response body caps, server timeouts, bounded rate-limiter memory |
@@ -123,6 +127,29 @@ queue:
   workers: 5
 metrics: { enabled: true, port: 9090 }     # /metrics is served here, not on the API port
 ```
+
+#### Upstream credentials
+
+Map a header to the **name** of an environment variable. The relayer reads the value at startup
+(and refuses to start if it is unset) and adds it to every request to that target:
+
+```yaml
+relay:
+  targets:
+    - name: "anthropic"
+      url: "https://api.anthropic.com"
+      secret_headers:
+        X-Api-Key: ANTHROPIC_API_KEY
+```
+
+```bash
+# on the host (gitignored, preserved by `make deploy-pi`, given only to the relayer container)
+echo 'ANTHROPIC_API_KEY=<real key>' >> infra/docker/.env.relayer && chmod 600 infra/docker/.env.relayer
+```
+
+Clients call `{"target":"anthropic", ...}` with their own relayer key. Rotating the upstream key is one
+edit on the host plus `make deploy-pi`, which recreates the container with the new environment. The relayer holds the key and does not stream, so
+SDKs that expect a drop-in base URL (e.g. `ANTHROPIC_BASE_URL`) still need a passthrough mode, which is not built.
 
 ### Go SDK
 

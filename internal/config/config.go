@@ -54,6 +54,8 @@ type TargetConfig struct {
 	AllowHTTP         bool          `koanf:"allow_http"`
 	AllowPrivateIPs   bool          `koanf:"allow_private_ips"`
 	PreserveUserAgent bool          `koanf:"preserve_user_agent"`
+	// SecretHeaders maps header name -> env var NAME holding the value (injected by the relay).
+	SecretHeaders map[string]string `koanf:"secret_headers"`
 }
 
 type ServerConfig struct {

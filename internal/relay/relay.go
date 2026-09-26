@@ -177,6 +177,15 @@ func newSafeClient(cfg HandlerConfig, logger zerolog.Logger) *http.Client {
 			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
 				return fmt.Errorf("redirect to scheme %q rejected", req.URL.Scheme)
 			}
+			// net/http copies every header onto the redirected request and only strips
+			// Authorization/Cookie on a host change. Injected secrets go to the configured
+			// origin only: drop them on any host or scheme change (incl. an https->http downgrade).
+			if orig := via[0].URL; req.URL.Host != orig.Host || req.URL.Scheme != orig.Scheme {
+				secrets, _ := req.Context().Value(secretsCtxKey{}).([]secretHeader)
+				for _, s := range secrets {
+					req.Header.Del(s.name)
+				}
+			}
 			return nil
 		},
 	}
@@ -188,6 +197,9 @@ type allowPrivateCtxKey struct{}
 func ctxWithAllowPrivate(ctx context.Context, allow bool) context.Context {
 	return context.WithValue(ctx, allowPrivateCtxKey{}, allow)
 }
+
+// Context key carrying the target's injected secrets to CheckRedirect.
+type secretsCtxKey struct{}
 
 func privateAllowedFromCtx(ctx context.Context) (bool, bool) {
 	v, ok := ctx.Value(allowPrivateCtxKey{}).(bool)
@@ -305,6 +317,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.logger.Warn().Err(err).Str("target", req.Target).Msg("reading response body")
 	}
+	body = target.redact(body)
 
 	h.logger.Info().
 		Str("target", req.Target).
@@ -396,6 +409,9 @@ func (h *Handler) doRelay(ctx context.Context, target Target, req RelayRequest) 
 
 	// Pass the per-target allow_private_ips flag down to DialContext via context.
 	ctx = ctxWithAllowPrivate(ctx, target.AllowPrivateIPs)
+	if len(target.secrets) > 0 {
+		ctx = context.WithValue(ctx, secretsCtxKey{}, target.secrets)
+	}
 
 	finalURL, err := buildTargetURL(target.BaseURL, req.Path)
 	if err != nil {
@@ -421,11 +437,18 @@ func (h *Handler) doRelay(ctx context.Context, target Target, req RelayRequest) 
 	}
 
 	// Apply client headers through the allow/deny filter.
+	// Client headers colliding with a secret header (in any case/underscore spelling) are
+	// dropped, so the client can neither override the secret nor send a second copy of it.
 	for k, v := range req.Headers {
-		if !isHeaderAllowed(k, h.cfg.PreserveClientIdentity || target.PreserveUserAgent) {
+		if !isHeaderAllowed(k, h.cfg.PreserveClientIdentity || target.PreserveUserAgent) || target.isSecretHeader(k) {
 			continue
 		}
 		httpReq.Header.Set(k, v)
+	}
+
+	// Injected last: the relay, not the client, owns these credentials.
+	for _, s := range target.secrets {
+		httpReq.Header.Set(s.name, s.value)
 	}
 
 	resp, err := h.client.Do(httpReq)

@@ -68,7 +68,7 @@ tunnel:
 PI ?= <user>@<pi-host>
 sync-pi:
 	rsync -az --delete --exclude .git --exclude bin --exclude infra/terraform --exclude private \
-		--filter='P configs/config.yaml' --filter='P infra/docker/.env' --include configs/config.yaml --filter=':- .gitignore' ./ $(PI):relayer/
+		--filter='P configs/config.yaml' --filter='P infra/docker/.env' --filter='P infra/docker/.env.relayer' --include configs/config.yaml --filter=':- .gitignore' ./ $(PI):relayer/
 
 deploy-pi: sync-pi
 	# restart: config.yaml is a bind mount, so a config-only change does not recreate the container

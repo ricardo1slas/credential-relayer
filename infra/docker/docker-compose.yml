@@ -37,6 +37,11 @@ services:
         condition: service_healthy
     environment:
       RELAYER_QUEUE_REDIS_ADDR: redis:6379
+    # Upstream secrets referenced by secret_headers in config.yaml (gitignored; see README).
+    # Separate from .env so the relayer never receives the SMTP/Grafana credentials.
+    env_file:
+      - path: .env.relayer
+        required: false
     ports:
       - "${BIND_IP:-127.0.0.1}:8080:8080"
     volumes:

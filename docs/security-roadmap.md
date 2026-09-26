@@ -28,6 +28,7 @@ Last baseline: 2026-04-18. 2026-09-25: govulncheck CI failed on Go 1.26.2 stdlib
 | T13 Error message leakage | LOW | ⏳ deferred -- Phase 10 |
 | T14 Dependency/image drift | LOW→MED | ✅ fixed (Phase 6: govulncheck + trivy on PR + nightly, Dependabot weekly) |
 | gosec G101 (header name) | FP | ✅ nosec |
+| T15 Upstream credential exposure (secrets on clients; leaks via override, redirect, echo) | HIGH | ✅ fixed 2026-09-26: `secret_headers` injection; see `docs/hardening.md` §4 item 3b |
 
 ---
 

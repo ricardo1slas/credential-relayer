@@ -34,6 +34,11 @@ relay:
       # allow_http: true           # permit http:// scheme (default: reject)
       # allow_private_ips: true    # permit RFC1918/loopback/link-local (default: reject)
       # preserve_user_agent: true  # per-target override for preserve_client_identity
+      # Credentials the relay injects on every request to this target. Values are the NAMES of
+      # env vars (infra/docker/.env.relayer), never the secrets themselves. Clients can't read,
+      # override or redirect them, and echoed values are redacted from responses.
+      # secret_headers:
+      #   X-Api-Key: HTTPBIN_API_KEY
 
 queue:
   redis:
