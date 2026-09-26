@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/ricardo1slas/private_relayer/internal/relay"
@@ -93,8 +94,10 @@ func (wp *WorkerPool) processJob(ctx context.Context, job *Job, logger zerolog.L
 		logger.Error().Err(err).Int("attempt", job.Attempts).Msg("job relay failed")
 
 		job.Error = err.Error()
-		if job.Attempts >= job.MaxRetries {
-			logger.Warn().Msg("max retries reached, sending to dead-letter queue")
+		// A policy rejection (e.g. config tightened after enqueue) never succeeds on retry.
+		var rerr *relay.RequestError
+		if job.Attempts >= job.MaxRetries || errors.As(err, &rerr) {
+			logger.Warn().Msg("sending to dead-letter queue")
 			_ = wp.queue.SendToDeadLetter(ctx, job)
 			wp.metrics.RecordJob("dead")
 			return

@@ -2,21 +2,13 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/ricardo1slas/private_relayer/internal/auth"
 	"github.com/ricardo1slas/private_relayer/internal/queue"
 	"github.com/ricardo1slas/private_relayer/internal/relay"
 )
-
-var allowedWebhookMethods = map[string]struct{}{
-	http.MethodGet:    {},
-	http.MethodPost:   {},
-	http.MethodPut:    {},
-	http.MethodPatch:  {},
-	http.MethodDelete: {},
-}
 
 type webhookRequest struct {
 	Target  string            `json:"target"`
@@ -26,7 +18,7 @@ type webhookRequest struct {
 	Body    json.RawMessage   `json:"body,omitempty"`
 }
 
-func webhookHandler(q *queue.Queue, maxBytes int64) http.HandlerFunc {
+func webhookHandler(q *queue.Queue, rh *relay.Handler, maxBytes int64) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 
@@ -50,12 +42,16 @@ func webhookHandler(q *queue.Queue, maxBytes int64) http.HandlerFunc {
 			return
 		}
 
-		if req.Method == "" {
-			req.Method = http.MethodPost
-		}
-		req.Method = strings.ToUpper(req.Method)
-		if _, ok := allowedWebhookMethods[req.Method]; !ok {
-			writeError(w, http.StatusBadRequest, "method not allowed: "+req.Method)
+		// Same gate as /relay, applied before enqueue: an unknown target, bad path or policy
+		// violation gets a 4xx now instead of a job that can only dead-letter.
+		req.Method = relay.NormalizeMethod(req.Method)
+		if _, err := rh.Authorize(req.Target, req.Method, req.Path, len(req.Body)); err != nil {
+			var rerr *relay.RequestError
+			if !errors.As(err, &rerr) {
+				writeError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+			writeError(w, rerr.Status, rerr.Msg)
 			return
 		}
 

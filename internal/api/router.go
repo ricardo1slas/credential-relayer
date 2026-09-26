@@ -42,7 +42,7 @@ func NewRouter(deps RouterDeps) chi.Router {
 		r.Use(deps.APIKeyAuth.Middleware)
 		r.Use(deps.Limiter.Middleware)
 		r.Post("/relay", deps.RelayHandler.ServeHTTP)
-		r.Post("/webhook", webhookHandler(deps.Queue, deps.MaxRequestBytes))
+		r.Post("/webhook", webhookHandler(deps.Queue, deps.RelayHandler, deps.MaxRequestBytes))
 		r.Get("/jobs/{id}", jobStatusHandler(deps.Queue))
 	})
 

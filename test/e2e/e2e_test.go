@@ -70,6 +70,11 @@ func newStack(t *testing.T, opts stackOpts) *stack {
 		Retries:         2,
 		AllowHTTP:       true, // httptest serves plain http on loopback
 		AllowPrivateIPs: true,
+	}, {
+		// Same upstream behind a request policy.
+		Name: "locked", URL: opts.upstreamURL, Timeout: 3 * time.Second, Retries: 2,
+		AllowHTTP: true, AllowPrivateIPs: true,
+		AllowMethods: []string{"POST"}, AllowPaths: []string{"/v1/messages"}, MaxBodyBytes: 64,
 	}})
 	if err != nil {
 		t.Fatalf("registry: %v", err)
@@ -320,6 +325,56 @@ func TestE2EKeyScopeEnforced(t *testing.T) {
 	// The unrestricted key still works.
 	if _, err := client.New(s.server.URL, testAPIKey).Relay(context.Background(), client.RelayRequest{Target: "mock", Method: "GET", Path: "/"}); err != nil {
 		t.Fatalf("unrestricted key: %v", err)
+	}
+}
+
+// Policy is enforced on both entry points before anything reaches the upstream; for /webhook
+// that means at enqueue (no Redis needed: rejected requests never touch the queue).
+func TestE2ETargetPolicy(t *testing.T) {
+	var hits int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+	}))
+	defer upstream.Close()
+	s := newStack(t, stackOpts{upstreamURL: upstream.URL})
+	c := client.New(s.server.URL, testAPIKey)
+	big := json.RawMessage(`"` + strings.Repeat("x", 100) + `"`)
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   json.RawMessage
+		want   int
+	}{
+		{"method not allowed", "GET", "/v1/messages", nil, http.StatusForbidden},
+		{"path not allowed", "POST", "/v1/admin", nil, http.StatusForbidden},
+		{"traversal out of prefix", "POST", "/v1/messages/../admin", nil, http.StatusForbidden},
+		{"encoded traversal", "POST", "/v1/messages/%2e%2e/admin", nil, http.StatusForbidden},
+		{"body too large", "POST", "/v1/messages", big, http.StatusRequestEntityTooLarge},
+	}
+	var apiErr *client.APIError
+	for _, tc := range cases {
+		_, err := c.Relay(context.Background(), client.RelayRequest{Target: "locked", Method: tc.method, Path: tc.path, Body: tc.body})
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != tc.want {
+			t.Errorf("relay %s: want %d, got %v", tc.name, tc.want, err)
+		}
+		_, err = c.Webhook(context.Background(), client.WebhookRequest{Target: "locked", Method: tc.method, Path: tc.path, Body: tc.body})
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != tc.want {
+			t.Errorf("webhook %s: want %d, got %v", tc.name, tc.want, err)
+		}
+	}
+	// Unknown targets are now refused at enqueue instead of dead-lettering later.
+	_, err := c.Webhook(context.Background(), client.WebhookRequest{Target: "nope", Method: "POST", Path: "/"})
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+		t.Errorf("webhook unknown target: want 404, got %v", err)
+	}
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Fatalf("upstream reached %d times by requests the policy should reject", n)
+	}
+
+	if _, err := c.Relay(context.Background(), client.RelayRequest{Target: "locked", Method: "POST", Path: "/v1/messages", Body: json.RawMessage(`{"a":1}`)}); err != nil {
+		t.Fatalf("allowed request: %v", err)
 	}
 }
 

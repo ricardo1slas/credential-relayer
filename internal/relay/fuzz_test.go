@@ -2,6 +2,7 @@ package relay
 
 import (
 	"net/url"
+	pathpkg "path"
 	"strings"
 	"testing"
 )
@@ -28,6 +29,37 @@ func FuzzBuildTargetURL(f *testing.F) {
 		}
 		if strings.ContainsAny(got, "\r\n\x00") {
 			t.Fatalf("path %q produced control characters: %q", path, got)
+		}
+	})
+}
+
+// Property: if Authorize accepts a path under allow_paths ["/v1/messages"], then however the
+// upstream decodes and normalizes it, it still lands inside /v1/messages.
+func FuzzPathPolicy(f *testing.F) {
+	registry, err := NewTargetRegistry([]TargetConfig{{Name: "t", URL: "https://api.example.com", AllowPaths: []string{"/v1/messages"}}})
+	if err != nil {
+		f.Fatal(err)
+	}
+	h := &Handler{registry: registry}
+	for _, s := range []string{"/v1/messages", "/v1/messages/x", "/v1/messages/../admin", "/v1/messages/%2e%2e/admin",
+		"/v1/messages/..;/admin", "/v1/messages%2f..%2fadmin", `/v1/messages/..\admin`, "/v1/messages/./../x", "/v1/messages?x=/../a",
+		"/v1/messages/%252e%252e/admin", "/v1/messagesX", "/v1/messages//../x"} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, p string) {
+		if _, err := h.Authorize("t", "POST", p, 0); err != nil {
+			return
+		}
+		got, _ := buildTargetURL(registry.targets["t"].BaseURL, p)
+		u, _ := url.Parse(got)
+		// Model an upstream that fully decodes, folds backslashes, and cleans the path.
+		dec, err := url.PathUnescape(u.EscapedPath())
+		if err != nil {
+			dec = u.Path
+		}
+		clean := pathpkg.Clean(strings.ReplaceAll(dec, `\`, "/"))
+		if clean != "/v1/messages" && !strings.HasPrefix(clean, "/v1/messages/") {
+			t.Fatalf("path %q accepted but an upstream would serve %q", p, clean)
 		}
 	})
 }

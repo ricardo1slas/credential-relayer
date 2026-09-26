@@ -36,6 +36,8 @@ flowchart LR
 - **Credential injection**: a target's upstream secrets (API keys, bearer tokens) live only on the relayer
   and are added to every outbound request. Clients name the target and never see, override or
   exfiltrate the secret.
+- **Per-target policy**: allowed methods, path prefixes and a body-size cap for each target, enforced on
+  `/relay`, on `/webhook` before a job is queued, and again in the worker.
 - **Auth**: API keys stored as SHA-256 hashes, optional expiry, overlapping keys for rotation,
   per-key **target allow-lists**, and job ownership (a key can only read its own jobs).
 - **Rate limiting**: token bucket per API key.
@@ -52,6 +54,7 @@ the findings fixed and regression-tested. Highlights:
 |---|---|
 | SSRF | Target chosen by name, never by URL; client path resolved against the base URL and checked (fuzzed); dial-time resolution blocks private/loopback addresses; redirects capped and re-validated; HTTPS-only targets by default |
 | Upstream secrets | Loaded from env at startup, never from YAML or client input; injected last so clients can't override them (including `_`-folded spellings); dropped on cross-host or scheme-changing redirects; redacted if the upstream echoes them; never written to Redis |
+| Request policy | Per-target method, path-prefix and body-size rules; paths judged after `../` resolution; encoded `%2e`/`%2f`/`%5c`, `\` and `;` refused so an upstream can't normalize its way out of the prefix (fuzzed) |
 | Request smuggling | Header allow/deny-list that also folds `_` to `-` (a bypass found by fuzzing); hop-by-hop and auth headers never forwarded |
 | AuthN / AuthZ | Hashed keys, constant-time compare, expired and unknown keys indistinguishable; per-key target scopes fail closed; 404 (not 403) on other keys' jobs |
 | Resource limits | Inbound and response body caps, server timeouts, bounded rate-limiter memory |
@@ -140,6 +143,11 @@ relay:
       url: "https://api.anthropic.com"
       secret_headers:
         X-Api-Key: ANTHROPIC_API_KEY
+      # Scope what the credential can be used for: without this, any key allowed to use the
+      # target can call any endpoint of the upstream with your secret.
+      allow_methods: ["POST"]
+      allow_paths: ["/v1/messages"]
+      max_body_bytes: 262144
 ```
 
 ```bash

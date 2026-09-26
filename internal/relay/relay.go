@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/ricardo1slas/private_relayer/internal/auth"
 	"io"
@@ -268,26 +269,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Method == "" {
-		req.Method = http.MethodPost
-	}
-	req.Method = strings.ToUpper(req.Method)
-	if _, ok := allowedMethods[req.Method]; !ok {
-		writeJSON(w, http.StatusBadRequest, RelayResponse{
-			Status:  "error",
-			Target:  req.Target,
-			Error:   fmt.Sprintf("method %q not allowed", req.Method),
-			Latency: time.Since(start).String(),
-		})
-		return
-	}
-
-	target, err := h.registry.Get(req.Target)
+	req.Method = NormalizeMethod(req.Method)
+	target, err := h.Authorize(req.Target, req.Method, req.Path, len(req.Body))
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, RelayResponse{
+		var rerr *RequestError
+		if !errors.As(err, &rerr) {
+			rerr = &RequestError{http.StatusInternalServerError, "internal error"}
+		}
+		h.logger.Warn().Str("key", auth.KeyName(r.Context())).Str("target", req.Target).Str("method", req.Method).
+			Int("status", rerr.Status).Msg("relay rejected: " + rerr.Msg)
+		writeJSON(w, rerr.Status, RelayResponse{
 			Status:  "error",
 			Target:  req.Target,
-			Error:   err.Error(),
+			Error:   rerr.Msg,
 			Latency: time.Since(start).String(),
 		})
 		return
@@ -338,17 +332,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // ExecuteRelay performs a relay to a named target. Used by both the HTTP handler and the async worker pool.
+// Policy is re-checked here: a job queued before a config change must not bypass the new policy.
 func (h *Handler) ExecuteRelay(ctx context.Context, targetName, method, path string, headers map[string]string, body json.RawMessage) (*http.Response, int, error) {
-	target, err := h.registry.Get(targetName)
+	method = NormalizeMethod(method)
+	target, err := h.Authorize(targetName, method, path, len(body))
 	if err != nil {
 		return nil, 0, err
-	}
-	method = strings.ToUpper(method)
-	if method == "" {
-		method = http.MethodPost
-	}
-	if _, ok := allowedMethods[method]; !ok {
-		return nil, 0, fmt.Errorf("method %q not allowed", method)
 	}
 
 	req := RelayRequest{
@@ -360,6 +349,40 @@ func (h *Handler) ExecuteRelay(ctx context.Context, targetName, method, path str
 	}
 
 	return h.relayWithRetries(ctx, target, req)
+}
+
+// NormalizeMethod defaults an empty method to POST and upper-cases it.
+func NormalizeMethod(m string) string {
+	if m == "" {
+		return http.MethodPost
+	}
+	return strings.ToUpper(m)
+}
+
+// Authorize is the single request gate for /relay, /webhook (at enqueue, so a bad job is
+// refused with a 4xx instead of dead-lettered) and the worker: global method allow-list,
+// target lookup, path validation, then the target's own policy. Errors are *RequestError.
+// Key scopes are checked by the caller first, so an unscoped key can't probe targets.
+func (h *Handler) Authorize(targetName, method, path string, bodyLen int) (Target, error) {
+	if _, ok := allowedMethods[method]; !ok {
+		return Target{}, &RequestError{http.StatusBadRequest, fmt.Sprintf("method %q not allowed", method)}
+	}
+	target, err := h.registry.Get(targetName)
+	if err != nil {
+		return Target{}, &RequestError{http.StatusNotFound, err.Error()}
+	}
+	resolved, err := buildTargetURL(target.BaseURL, path)
+	if err != nil {
+		return Target{}, &RequestError{http.StatusBadRequest, "invalid path: " + err.Error()}
+	}
+	u, err := url.Parse(resolved)
+	if err != nil {
+		return Target{}, &RequestError{http.StatusBadRequest, "invalid path"}
+	}
+	if err := target.checkPolicy(method, u.EscapedPath(), bodyLen); err != nil {
+		return Target{}, err
+	}
+	return target, nil
 }
 
 func (h *Handler) relayWithRetries(ctx context.Context, target Target, req RelayRequest) (*http.Response, int, error) {

@@ -54,6 +54,9 @@ func main() {
 			AllowPrivateIPs:   t.AllowPrivateIPs,
 			PreserveUserAgent: t.PreserveUserAgent,
 			SecretHeaders:     t.SecretHeaders,
+			AllowMethods:      t.AllowMethods,
+			AllowPaths:        t.AllowPaths,
+			MaxBodyBytes:      t.MaxBodyBytes,
 		}
 	}
 

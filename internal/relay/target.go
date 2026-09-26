@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 )
@@ -22,6 +23,10 @@ type TargetConfig struct {
 	// SecretHeaders maps an outbound header name to the NAME of the environment variable
 	// holding its value (e.g. {"X-Api-Key": "ANTHROPIC_API_KEY"}). Values never live in YAML.
 	SecretHeaders map[string]string `koanf:"secret_headers"`
+	// Request policy. Empty means no restriction beyond the global rules.
+	AllowMethods []string `koanf:"allow_methods"`  // subset of GET/POST/PUT/PATCH/DELETE
+	AllowPaths   []string `koanf:"allow_paths"`    // path prefixes on segment boundaries: "/v1/messages"
+	MaxBodyBytes int64    `koanf:"max_body_bytes"` // cap on the relayed body, below the global max_request_bytes
 }
 
 // Target is the validated, parsed form used at request time.
@@ -35,6 +40,77 @@ type Target struct {
 	PreserveUserAgent bool
 	// secrets is unexported so the resolved values can never be marshaled into a response or log.
 	secrets []secretHeader
+
+	allowMethods []string
+	allowPaths   []string
+	maxBodyBytes int64
+}
+
+// RequestError is a request rejected before anything is sent upstream. Status is the HTTP
+// code to return to the client.
+type RequestError struct {
+	Status int
+	Msg    string
+}
+
+func (e *RequestError) Error() string { return e.Msg }
+
+// checkPolicy applies the target's request policy. resolvedPath is the escaped path after
+// buildTargetURL's resolution (dot segments already removed), never the raw client path,
+// so "/v1/messages/../admin" is judged as "/admin".
+func (t Target) checkPolicy(method, resolvedPath string, bodyLen int) error {
+	if len(t.allowMethods) > 0 && !slices.Contains(t.allowMethods, method) {
+		return &RequestError{http.StatusForbidden, fmt.Sprintf("method %s not allowed for this target", method)}
+	}
+	if len(t.allowPaths) > 0 && !t.pathAllowed(resolvedPath) {
+		return &RequestError{http.StatusForbidden, "path not allowed for this target"}
+	}
+	if t.maxBodyBytes > 0 && int64(bodyLen) > t.maxBodyBytes {
+		return &RequestError{http.StatusRequestEntityTooLarge, fmt.Sprintf("body exceeds %d bytes for this target", t.maxBodyBytes)}
+	}
+	return nil
+}
+
+// pathAllowed matches prefixes on segment boundaries ("/v1/messages" allows "/v1/messages" and
+// "/v1/messages/x", not "/v1/messagesX"). Paths an upstream might decode or normalize
+// differently than we do are refused outright: encoded dots/slashes/backslashes ("%2e%2e",
+// "%2f"), raw backslashes, and ";" (Tomcat-style "..;/" traversal).
+func (t Target) pathAllowed(p string) bool {
+	if p == "" {
+		p = "/"
+	}
+	lp := strings.ToLower(p)
+	if strings.Contains(lp, "%2e") || strings.Contains(lp, "%2f") || strings.Contains(lp, "%5c") ||
+		strings.ContainsAny(p, `\;`) {
+		return false
+	}
+	for _, prefix := range t.allowPaths {
+		if p == prefix || strings.HasPrefix(p, strings.TrimSuffix(prefix, "/")+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizePolicy validates a target's policy config at startup.
+func normalizePolicy(tc TargetConfig) (methods, paths []string, err error) {
+	for _, m := range tc.AllowMethods {
+		m = strings.ToUpper(strings.TrimSpace(m))
+		if _, ok := allowedMethods[m]; !ok {
+			return nil, nil, fmt.Errorf("target %q: allow_methods: %q is not one of GET, POST, PUT, PATCH, DELETE", tc.Name, m)
+		}
+		methods = append(methods, m)
+	}
+	for _, p := range tc.AllowPaths {
+		if !strings.HasPrefix(p, "/") || strings.Contains(p, "..") || strings.ContainsAny(p, `\;?#%`) {
+			return nil, nil, fmt.Errorf("target %q: allow_paths: %q must be a plain absolute path like /v1/messages", tc.Name, p)
+		}
+		paths = append(paths, p)
+	}
+	if tc.MaxBodyBytes < 0 {
+		return nil, nil, fmt.Errorf("target %q: max_body_bytes must be >= 0", tc.Name)
+	}
+	return methods, paths, nil
 }
 
 type secretHeader struct {
@@ -141,6 +217,10 @@ func NewTargetRegistry(targets []TargetConfig) (*TargetRegistry, error) {
 		if err != nil {
 			return nil, err
 		}
+		methods, paths, err := normalizePolicy(t)
+		if err != nil {
+			return nil, err
+		}
 
 		m[t.Name] = Target{
 			Name:              t.Name,
@@ -151,6 +231,9 @@ func NewTargetRegistry(targets []TargetConfig) (*TargetRegistry, error) {
 			AllowPrivateIPs:   t.AllowPrivateIPs,
 			PreserveUserAgent: t.PreserveUserAgent,
 			secrets:           secrets,
+			allowMethods:      methods,
+			allowPaths:        paths,
+			maxBodyBytes:      t.MaxBodyBytes,
 		}
 	}
 	return &TargetRegistry{targets: m}, nil

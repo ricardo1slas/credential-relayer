@@ -56,6 +56,9 @@ type TargetConfig struct {
 	PreserveUserAgent bool          `koanf:"preserve_user_agent"`
 	// SecretHeaders maps header name -> env var NAME holding the value (injected by the relay).
 	SecretHeaders map[string]string `koanf:"secret_headers"`
+	AllowMethods  []string          `koanf:"allow_methods"`
+	AllowPaths    []string          `koanf:"allow_paths"`
+	MaxBodyBytes  int64             `koanf:"max_body_bytes"`
 }
 
 type ServerConfig struct {

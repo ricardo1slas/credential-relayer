@@ -39,6 +39,12 @@ relay:
       # override or redirect them, and echoed values are redacted from responses.
       # secret_headers:
       #   X-Api-Key: HTTPBIN_API_KEY
+      # Request policy (checked on /relay, on /webhook before enqueue, and again in the worker).
+      # Empty = no restriction. Paths are prefixes on segment boundaries, matched after "../"
+      # resolution; encoded dots/slashes, backslashes and ";" are refused when allow_paths is set.
+      # allow_methods: ["GET", "POST"]      # else 403
+      # allow_paths: ["/get", "/post"]      # else 403
+      # max_body_bytes: 65536               # else 413 (per target, below max_request_bytes)
 
 queue:
   redis:
