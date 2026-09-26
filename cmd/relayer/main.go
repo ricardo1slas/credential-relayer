@@ -64,12 +64,21 @@ func main() {
 	// Build auth middleware from config.
 	authKeys := make([]auth.KeyConfig, len(cfg.Auth.APIKeys))
 	for i, k := range cfg.Auth.APIKeys {
-		authKeys[i] = auth.KeyConfig{Name: k.Name, Key: k.Key, Targets: k.Targets}
+		authKeys[i] = auth.KeyConfig{Name: k.Name, Key: k.Key, KeySHA256: k.KeySHA256, ExpiresAt: k.ExpiresAt, Targets: k.Targets}
+		if err := authKeys[i].Validate(); err != nil {
+			logger.Fatal().Err(err).Msg("invalid api key config")
+		}
+		if k.Key != "" {
+			logger.Warn().Str("key", k.Name).Msg("api key is stored in plaintext: use key_sha256 (make new-key)")
+		}
 		if len(k.Targets) == 0 {
 			logger.Warn().Str("key", k.Name).Msg("api key has no targets list: it can use every target (set targets: [...] to scope it)")
 		}
+		if exp, ok, _ := authKeys[i].Expiry(); ok && time.Until(exp) < 14*24*time.Hour {
+			logger.Warn().Str("key", k.Name).Time("expires_at", exp).Msg("api key expires within 14 days")
+		}
 	}
-	apiKeyAuth := auth.NewAPIKeyAuth(authKeys)
+	apiKeyAuth := auth.NewAPIKeyAuth(authKeys).WithLogger(logger)
 
 	// Build rate limiter from config.
 	limiter := ratelimit.New(ratelimit.Config{

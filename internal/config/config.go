@@ -25,9 +25,11 @@ type AuthConfig struct {
 }
 
 type APIKeyConfig struct {
-	Name    string   `koanf:"name"`
-	Key     string   `koanf:"key"`
-	Targets []string `koanf:"targets"` // allowed relay targets; empty or ["*"] = all
+	Name      string   `koanf:"name"`
+	Key       string   `koanf:"key"`        // plaintext (dev only); prefer key_sha256
+	KeySHA256 string   `koanf:"key_sha256"` // hex SHA-256 of the key (make new-key)
+	ExpiresAt string   `koanf:"expires_at"` // optional RFC 3339 or YYYY-MM-DD
+	Targets   []string `koanf:"targets"`    // allowed relay targets; empty or ["*"] = all
 }
 
 type RateLimitConfig struct {
