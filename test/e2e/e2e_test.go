@@ -7,9 +7,11 @@
 package e2e
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -375,6 +377,61 @@ func TestE2ETargetPolicy(t *testing.T) {
 
 	if _, err := c.Relay(context.Background(), client.RelayRequest{Target: "locked", Method: "POST", Path: "/v1/messages", Body: json.RawMessage(`{"a":1}`)}); err != nil {
 		t.Fatalf("allowed request: %v", err)
+	}
+}
+
+// Through the real router: SDK-style auth (x-api-key), path + query extraction, and streaming
+// that survives the logging/metrics response-writer wrappers.
+func TestE2EProxyStreams(t *testing.T) {
+	release := make(chan struct{})
+	var gotPath, gotKey string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotKey = r.URL.RequestURI(), r.Header.Get("X-Api-Key")
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: one\n\n")
+		w.(http.Flusher).Flush()
+		<-release
+		_, _ = io.WriteString(w, "data: two\n\n")
+	}))
+	defer upstream.Close()
+	defer close(release)
+	s := newStack(t, stackOpts{upstreamURL: upstream.URL})
+
+	req, _ := http.NewRequest(http.MethodPost, s.server.URL+"/api/v1/proxy/mock/v1/messages?beta=true", strings.NewReader(`{}`))
+	req.Header.Set("x-api-key", testAPIKey) // what the Anthropic SDK sends with ANTHROPIC_API_KEY=<relayer key>
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+
+	first := make(chan string, 1)
+	go func() { line, _ := bufio.NewReader(resp.Body).ReadString('\n'); first <- line }()
+	select {
+	case got := <-first:
+		if got != "data: one\n" {
+			t.Fatalf("first line %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first event not streamed through the router")
+	}
+	if gotPath != "/v1/messages?beta=true" || gotKey != "" {
+		t.Fatalf("upstream saw path %q, x-api-key %q (relayer key must not be forwarded)", gotPath, gotKey)
+	}
+
+	// Scoped keys are enforced here too.
+	req, _ = http.NewRequest(http.MethodPost, s.server.URL+"/api/v1/proxy/mock/v1/messages", strings.NewReader(`{}`))
+	req.Header.Set("X-API-Key", scopedAPIKey)
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp2.Body.Close()
+	if resp2.StatusCode != http.StatusForbidden {
+		t.Fatalf("scoped key: got %d, want 403", resp2.StatusCode)
 	}
 }
 

@@ -44,6 +44,7 @@ func NewRouter(deps RouterDeps) chi.Router {
 		r.Post("/relay", deps.RelayHandler.ServeHTTP)
 		r.Post("/webhook", webhookHandler(deps.Queue, deps.RelayHandler, deps.MaxRequestBytes))
 		r.Get("/jobs/{id}", jobStatusHandler(deps.Queue))
+		r.HandleFunc("/proxy/{target}/*", proxyHandler(deps.RelayHandler))
 	})
 
 	return r

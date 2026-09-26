@@ -45,6 +45,8 @@ relay:
       # allow_methods: ["GET", "POST"]      # else 403
       # allow_paths: ["/get", "/post"]      # else 403
       # max_body_bytes: 65536               # else 413 (per target, below max_request_bytes)
+      # Streaming proxy: /api/v1/proxy/httpbin/get forwards to https://httpbin.org/get as-is.
+      # `timeout` bounds the whole stream there, so LLM targets want a long one (e.g. 600s).
 
 queue:
   redis:

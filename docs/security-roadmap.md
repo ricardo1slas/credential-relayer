@@ -30,6 +30,7 @@ Last baseline: 2026-04-18. 2026-09-25: govulncheck CI failed on Go 1.26.2 stdlib
 | gosec G101 (header name) | FP | ✅ nosec |
 | T15 Upstream credential exposure (secrets on clients; leaks via override, redirect, echo) | HIGH | ✅ fixed 2026-09-26: `secret_headers` injection; see `docs/hardening.md` §4 item 3b |
 | T16 Over-broad use of a target (any endpoint/method/size with the relay's credential) | HIGH | ✅ fixed 2026-09-26: per-target `allow_methods`/`allow_paths`/`max_body_bytes`; see `docs/hardening.md` §4 item 3c |
+| T17 Streaming passthrough (relayer key forwarded upstream, chunk-split secret echo, compressed echo, truncation) | HIGH | ✅ fixed 2026-09-26: `/api/v1/proxy`; see `docs/hardening.md` §4 item 3d |
 
 ---
 
@@ -366,3 +367,4 @@ Before we execute Phase 5.5, decide:
 | 2026-04-19 | phase 6 fixup | Fixed CI on first push: bumped action versions (golangci-lint-action v6→v8, trivy-action 0.28.0→0.35.0, setup-buildx v3→v4, build-push v6→v7), pinned golangci-lint binary to v2.11.4 (v2.1.6 was compiled with Go 1.24, couldn't parse go.mod's 1.26.2), fixed Dockerfile CI build (dropped empty pkg/ copy, renamed configs/config.yaml copy to use config.example.yaml since live config is gitignored), bumped alpine 3.21→3.23. Removed `codeql.yml`: SARIF upload requires GitHub Advanced Security on private repos, not available on this plan. Trade: lost CodeQL's taint tracking; kept gosec + govulncheck + trivy + gitleaks. Re-add CodeQL in Phase 10 public showcase repo (free on public). |
 | 2026-09-26 | credential injection | Added T15 (per-target `secret_headers`). The first full-history gitleaks run on CI flagged T12b: the dev key in `6943cd8` was still the live `dev-client` key. Rotated to a hashed key, redacted from docs, historic fingerprints added to `.gitleaksignore`. |
 | 2026-09-26 | request policy | Added T16 (per-target method/path/body policy, one `Authorize` gate for /relay, /webhook enqueue and the worker; `FuzzPathPolicy` 4.4M execs clean). Deploys now wait for `ci` to pass. |
+| 2026-09-26 | streaming proxy | Added T17 (`/api/v1/proxy/{target}/...`): SDK drop-in with streamed responses, same gate and secret handling as `/relay`. |

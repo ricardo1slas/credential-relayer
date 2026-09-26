@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -160,9 +161,28 @@ func (t Target) isSecretHeader(name string) bool {
 	return false
 }
 
+// setSecrets injects the target's credentials. Call it after client headers are applied:
+// the relay, not the client, owns these.
+func (t Target) setSecrets(h http.Header) {
+	for _, s := range t.secrets {
+		h.Set(s.name, s.value)
+	}
+}
+
+// requestCtx carries per-target transport policy to the dialer (allow_private_ips) and to
+// CheckRedirect (which secrets to strip on a cross-origin hop).
+func (t Target) requestCtx(ctx context.Context) context.Context {
+	ctx = ctxWithAllowPrivate(ctx, t.AllowPrivateIPs)
+	if len(t.secrets) > 0 {
+		ctx = context.WithValue(ctx, secretsCtxKey{}, t.secrets)
+	}
+	return ctx
+}
+
 // redact replaces every injected secret value in b, so an upstream that echoes request
 // headers (httpbin /headers, debug endpoints) can't hand the secret back to the client.
 // ponytail: literal match only; a secret re-encoded by the upstream (base64, URL-escaped) survives.
+// The /proxy stream uses streamRedactor, which also catches secrets split across chunks.
 func (t Target) redact(b []byte) []byte {
 	for _, s := range t.secrets {
 		if bytes.Contains(b, []byte(s.value)) {

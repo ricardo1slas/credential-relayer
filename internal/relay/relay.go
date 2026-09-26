@@ -311,6 +311,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.logger.Warn().Err(err).Str("target", req.Target).Msg("reading response body")
 	}
+	// A body cut at the cap mid-secret is also cut mid-JSON-string, which RawMessage refuses to
+	// encode, so a partial secret can't reach the client here (unlike the raw /proxy stream).
 	body = target.redact(body)
 
 	h.logger.Info().
@@ -430,11 +432,7 @@ func (h *Handler) relayWithRetries(ctx context.Context, target Target, req Relay
 func (h *Handler) doRelay(ctx context.Context, target Target, req RelayRequest) (*http.Response, error) {
 	ctx, cancel := context.WithTimeout(ctx, target.Timeout)
 
-	// Pass the per-target allow_private_ips flag down to DialContext via context.
-	ctx = ctxWithAllowPrivate(ctx, target.AllowPrivateIPs)
-	if len(target.secrets) > 0 {
-		ctx = context.WithValue(ctx, secretsCtxKey{}, target.secrets)
-	}
+	ctx = target.requestCtx(ctx)
 
 	finalURL, err := buildTargetURL(target.BaseURL, req.Path)
 	if err != nil {
@@ -469,10 +467,7 @@ func (h *Handler) doRelay(ctx context.Context, target Target, req RelayRequest) 
 		httpReq.Header.Set(k, v)
 	}
 
-	// Injected last: the relay, not the client, owns these credentials.
-	for _, s := range target.secrets {
-		httpReq.Header.Set(s.name, s.value)
-	}
+	target.setSecrets(httpReq.Header)
 
 	resp, err := h.client.Do(httpReq)
 	if err != nil {
