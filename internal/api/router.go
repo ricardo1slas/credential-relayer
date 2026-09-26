@@ -27,7 +27,8 @@ func NewRouter(deps RouterDeps) chi.Router {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
+	// No RealIP: chi deprecated it as spoofable (X-Forwarded-For forgery). The Pi has no proxy in
+	// front, so RemoteAddr is the true peer. Behind an ALB use middleware.ClientIPFromXFFTrustedProxies.
 	r.Use(requestLogger(deps.Logger))
 	r.Use(metricsMiddleware(deps.Metrics))
 	r.Use(middleware.Recoverer)

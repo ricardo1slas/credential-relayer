@@ -2,9 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ricardo1slas/private_relayer/internal/auth"
 	"github.com/ricardo1slas/private_relayer/internal/queue"
 )
 
@@ -19,6 +21,10 @@ func jobStatusHandler(q *queue.Queue) http.HandlerFunc {
 		}
 
 		job, err := q.GetJob(r.Context(), jobID)
+		// 404 (not 403) for someone else's job so job IDs can't be probed.
+		if err == nil && (job.Owner == "" || job.Owner != auth.KeyName(r.Context())) {
+			err = fmt.Errorf("job not found")
+		}
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)

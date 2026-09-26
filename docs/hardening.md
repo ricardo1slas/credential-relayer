@@ -88,7 +88,7 @@ Not in the script (need your call):
 
 | # | Feature | Addresses | Size |
 |---|---|---|---|
-| 1 | **Per-key target allow-list**: each API key may only relay to named targets | API1/API5 (object/function-level authz): today any valid key reaches *every* target | small |
+| 1 | ✅ **Per-key target allow-list** (`targets:` per key; fails closed; 403 identical for forbidden vs unknown targets) **+ job ownership** (a key can only read jobs it enqueued; others get 404) | API1/API5 (object/function-level authz) | done 2026-09-25 |
 | 2 | **Hash API keys at rest** (SHA-256 of a high-entropy key; compare hashes in constant time) + `expires_at` and multiple active keys for rotation | API2 (broken auth), key hygiene | small |
 | 3 | **Fuzz tests** for `buildTargetURL` and the header filter (`go test -fuzz`) | API7 (SSRF), regression safety | small |
 | 4 | **Auth-failure throttling** per source IP + a structured **audit log** (key name, target, allow/deny, never payloads) | API2, API4, detection | small |

@@ -17,6 +17,7 @@ const (
 
 type Job struct {
 	ID           string            `json:"id"`
+	Owner        string            `json:"owner,omitempty"` // API key name that enqueued it
 	Target       string            `json:"target"`
 	Method       string            `json:"method"`
 	Path         string            `json:"path"`

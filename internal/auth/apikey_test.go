@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -107,5 +108,25 @@ func TestAPIKeyAuth_MultipleKeys(t *testing.T) {
 	}
 	if capturedName != "client-b" {
 		t.Errorf("expected 'client-b', got %q", capturedName)
+	}
+}
+
+func TestTargetAllowed(t *testing.T) {
+	cases := []struct {
+		name    string
+		ctx     func() context.Context
+		target  string
+		allowed bool
+	}{
+		{"listed", func() context.Context { return WithKey(context.Background(), "k", []string{"a", "b"}) }, "a", true},
+		{"not listed", func() context.Context { return WithKey(context.Background(), "k", []string{"a"}) }, "b", false},
+		{"wildcard", func() context.Context { return WithKey(context.Background(), "k", []string{"*"}) }, "anything", true},
+		{"empty list = all (backward compatible)", func() context.Context { return WithKey(context.Background(), "k", nil) }, "anything", true},
+		{"no principal fails closed", context.Background, "a", false},
+	}
+	for _, c := range cases {
+		if got := TargetAllowed(c.ctx(), c.target); got != c.allowed {
+			t.Errorf("%s: TargetAllowed(%q) = %v, want %v", c.name, c.target, got, c.allowed)
+		}
 	}
 }

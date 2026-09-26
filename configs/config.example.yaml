@@ -8,6 +8,7 @@ auth:
   api_keys:
     - name: "my-client"
       key: "replace-me-with-a-random-secret"
+      targets: ["httpbin"]   # least privilege: relay names this key may use ([] or ["*"] = all)
 
 rate_limit:
   requests: 100

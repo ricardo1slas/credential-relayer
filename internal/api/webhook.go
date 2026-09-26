@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ricardo1slas/private_relayer/internal/auth"
 	"github.com/ricardo1slas/private_relayer/internal/queue"
 	"github.com/ricardo1slas/private_relayer/internal/relay"
 )
@@ -41,6 +42,11 @@ func webhookHandler(q *queue.Queue, maxBytes int64) http.HandlerFunc {
 
 		if req.Target == "" {
 			writeError(w, http.StatusBadRequest, "target is required")
+			return
+		}
+
+		if !auth.TargetAllowed(r.Context(), req.Target) {
+			writeError(w, http.StatusForbidden, "key not permitted for this target")
 			return
 		}
 

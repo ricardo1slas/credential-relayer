@@ -64,7 +64,10 @@ func main() {
 	// Build auth middleware from config.
 	authKeys := make([]auth.KeyConfig, len(cfg.Auth.APIKeys))
 	for i, k := range cfg.Auth.APIKeys {
-		authKeys[i] = auth.KeyConfig{Name: k.Name, Key: k.Key}
+		authKeys[i] = auth.KeyConfig{Name: k.Name, Key: k.Key, Targets: k.Targets}
+		if len(k.Targets) == 0 {
+			logger.Warn().Str("key", k.Name).Msg("api key has no targets list: it can use every target (set targets: [...] to scope it)")
+		}
 	}
 	apiKeyAuth := auth.NewAPIKeyAuth(authKeys)
 

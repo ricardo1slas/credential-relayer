@@ -1,9 +1,9 @@
 module github.com/ricardo1slas/private_relayer
 
-go 1.26.2
+go 1.26.6
 
 require (
-	github.com/go-chi/chi/v5 v5.2.5
+	github.com/go-chi/chi/v5 v5.3.0
 	github.com/google/uuid v1.6.0
 	github.com/knadh/koanf/parsers/yaml v1.1.0
 	github.com/knadh/koanf/providers/env v1.1.0

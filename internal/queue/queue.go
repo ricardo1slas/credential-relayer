@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"fmt"
+	"github.com/ricardo1slas/private_relayer/internal/auth"
 	"time"
 
 	"github.com/google/uuid"
@@ -52,6 +53,7 @@ func NewQueue(client *redis.Client, cfg Config, logger zerolog.Logger) *Queue {
 func (q *Queue) Enqueue(ctx context.Context, target, method, path string, headers map[string]string, body []byte, maxRetries int) (*Job, error) {
 	job := &Job{
 		ID:         uuid.New().String(),
+		Owner:      auth.KeyName(ctx), // ctx carries the authenticated key from the HTTP request
 		Target:     target,
 		Method:     method,
 		Path:       path,

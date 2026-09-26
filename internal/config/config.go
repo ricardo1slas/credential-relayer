@@ -25,8 +25,9 @@ type AuthConfig struct {
 }
 
 type APIKeyConfig struct {
-	Name string `koanf:"name"`
-	Key  string `koanf:"key"`
+	Name    string   `koanf:"name"`
+	Key     string   `koanf:"key"`
+	Targets []string `koanf:"targets"` // allowed relay targets; empty or ["*"] = all
 }
 
 type RateLimitConfig struct {

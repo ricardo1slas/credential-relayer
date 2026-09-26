@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
@@ -10,18 +11,19 @@ import (
 const headerAPIKey = "X-API-Key"
 
 type KeyConfig struct {
-	Name string `koanf:"name"`
-	Key  string `koanf:"key"`
+	Name    string   `koanf:"name"`
+	Key     string   `koanf:"key"`
+	Targets []string `koanf:"targets"` // allowed relay targets; empty or ["*"] = all
 }
 
 type APIKeyAuth struct {
-	keys map[string]string // key value -> key name
+	keys map[string]*Principal // key value -> caller
 }
 
 func NewAPIKeyAuth(keys []KeyConfig) *APIKeyAuth {
-	m := make(map[string]string, len(keys))
+	m := make(map[string]*Principal, len(keys))
 	for _, k := range keys {
-		m[k.Key] = k.Name
+		m[k.Key] = newPrincipal(k.Name, k.Targets)
 	}
 	return &APIKeyAuth{keys: m}
 }
@@ -36,25 +38,25 @@ func (a *APIKeyAuth) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		name, ok := a.lookup(key)
+		p, ok := a.lookup(key)
 		if !ok {
 			writeError(w, http.StatusUnauthorized, "invalid API key")
 			return
 		}
 
-		ctx := withKeyName(r.Context(), name)
+		ctx := context.WithValue(r.Context(), contextKey{}, p)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
 // lookup uses constant-time comparison to prevent timing attacks.
-func (a *APIKeyAuth) lookup(candidate string) (string, bool) {
-	for key, name := range a.keys {
+func (a *APIKeyAuth) lookup(candidate string) (*Principal, bool) {
+	for key, p := range a.keys {
 		if subtle.ConstantTimeCompare([]byte(candidate), []byte(key)) == 1 {
-			return name, true
+			return p, true
 		}
 	}
-	return "", false
+	return nil, false
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {

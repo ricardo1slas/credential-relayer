@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,7 +30,11 @@ import (
 	"github.com/ricardo1slas/private_relayer/pkg/client"
 )
 
-const testAPIKey = "e2e-secret-key" // #nosec G101 -- test fixture, not a real credential
+const (
+	testAPIKey   = "e2e-secret-key" // #nosec G101 -- test fixture, not a real credential
+	scopedAPIKey = "e2e-scoped-key" // #nosec G101 -- test fixture; only allowed target "other"
+	otherAPIKey  = "e2e-other-key"  // #nosec G101 -- test fixture; a second unrestricted tenant
+)
 
 type stack struct {
 	server  *httptest.Server
@@ -82,9 +87,13 @@ func newStack(t *testing.T, opts stackOpts) *stack {
 	q := queue.NewQueue(rc, queue.Config{}, zerolog.Nop())
 
 	router := api.NewRouter(api.RouterDeps{
-		Logger:          zerolog.Nop(),
-		RelayHandler:    handler,
-		APIKeyAuth:      auth.NewAPIKeyAuth([]auth.KeyConfig{{Name: "e2e", Key: testAPIKey}}),
+		Logger:       zerolog.Nop(),
+		RelayHandler: handler,
+		APIKeyAuth: auth.NewAPIKeyAuth([]auth.KeyConfig{
+			{Name: "e2e", Key: testAPIKey},
+			{Name: "scoped", Key: scopedAPIKey, Targets: []string{"other"}},
+			{Name: "tenant-b", Key: otherAPIKey},
+		}),
 		Limiter:         ratelimit.New(ratelimit.Config{Requests: reqs, Window: win}),
 		Queue:           q,
 		RedisClient:     rc,
@@ -282,5 +291,54 @@ func TestE2EJobNotFound(t *testing.T) {
 	var apiErr *client.APIError
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404 APIError, got %v", err)
+	}
+}
+
+func TestE2EKeyScopeEnforced(t *testing.T) {
+	var hits int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+	}))
+	defer upstream.Close()
+	s := newStack(t, stackOpts{upstreamURL: upstream.URL})
+
+	scoped := client.New(s.server.URL, scopedAPIKey)
+	var apiErr *client.APIError
+
+	_, err := scoped.Relay(context.Background(), client.RelayRequest{Target: "mock", Method: "GET", Path: "/"})
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusForbidden {
+		t.Fatalf("relay to out-of-scope target: expected 403, got %v", err)
+	}
+	_, err = scoped.Webhook(context.Background(), client.WebhookRequest{Target: "mock", Method: "POST", Path: "/"})
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusForbidden {
+		t.Fatalf("webhook to out-of-scope target: expected 403, got %v", err)
+	}
+	if atomic.LoadInt32(&hits) != 0 {
+		t.Fatalf("upstream reached %d times by a key that is not allowed to use it", hits)
+	}
+
+	// The unrestricted key still works.
+	if _, err := client.New(s.server.URL, testAPIKey).Relay(context.Background(), client.RelayRequest{Target: "mock", Method: "GET", Path: "/"}); err != nil {
+		t.Fatalf("unrestricted key: %v", err)
+	}
+}
+
+func TestE2EJobOwnership(t *testing.T) {
+	s := newStack(t, stackOpts{upstreamURL: "http://127.0.0.1:1"})
+	s.requireRedis(t)
+
+	owner := client.New(s.server.URL, testAPIKey)
+	jobID, err := owner.Webhook(context.Background(), client.WebhookRequest{Target: "mock", Method: "POST", Path: "/x"})
+	if err != nil {
+		t.Fatalf("Webhook: %v", err)
+	}
+	if _, err := owner.JobStatus(context.Background(), jobID); err != nil {
+		t.Fatalf("owner cannot read own job: %v", err)
+	}
+
+	_, err = client.New(s.server.URL, otherAPIKey).JobStatus(context.Background(), jobID)
+	var apiErr *client.APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+		t.Fatalf("another key reading the job: expected 404, got %v", err)
 	}
 }

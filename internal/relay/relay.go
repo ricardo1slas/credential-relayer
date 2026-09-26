@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ricardo1slas/private_relayer/internal/auth"
 	"io"
 	"net"
 	"net/http"
@@ -237,6 +238,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, RelayResponse{
 			Status:  "error",
 			Error:   "target is required",
+			Latency: time.Since(start).String(),
+		})
+		return
+	}
+
+	// Authorize before the registry lookup so an unauthorized key can't tell a target it may not
+	// use from one that doesn't exist.
+	if !auth.TargetAllowed(r.Context(), req.Target) {
+		h.logger.Warn().Str("key", auth.KeyName(r.Context())).Str("target", req.Target).Msg("relay denied: key not permitted for target")
+		writeJSON(w, http.StatusForbidden, RelayResponse{
+			Status:  "error",
+			Target:  req.Target,
+			Error:   "key not permitted for this target",
 			Latency: time.Since(start).String(),
 		})
 		return

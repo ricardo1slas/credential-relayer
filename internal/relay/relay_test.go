@@ -3,6 +3,7 @@ package relay
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -10,8 +11,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ricardo1slas/private_relayer/internal/auth"
 	"github.com/rs/zerolog"
 )
+
+// authedRequest builds a POST /api/v1/relay as if the auth middleware had accepted an
+// unrestricted key (the handler fails closed without a principal).
+func authedRequest(body io.Reader) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/relay", body)
+	return r.WithContext(auth.WithKey(r.Context(), "test", nil))
+}
 
 // newTestHandler builds a Handler suitable for tests. httptest servers listen on
 // loopback + http, so we always flip AllowHTTP and AllowPrivateIPs on test targets.
@@ -41,7 +50,7 @@ func TestRelaySuccess(t *testing.T) {
 
 	body, _ := json.Marshal(RelayRequest{Target: "test-svc", Method: "GET", Path: "/get"})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/relay", bytes.NewReader(body))
+	req := authedRequest(bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -66,7 +75,7 @@ func TestRelayTargetNotFound(t *testing.T) {
 	})
 
 	body, _ := json.Marshal(RelayRequest{Target: "does-not-exist"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/relay", bytes.NewReader(body))
+	req := authedRequest(bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -81,7 +90,7 @@ func TestRelayBadRequest(t *testing.T) {
 	})
 
 	body, _ := json.Marshal(map[string]string{"method": "GET"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/relay", bytes.NewReader(body))
+	req := authedRequest(bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -95,7 +104,7 @@ func TestRelayInvalidJSON(t *testing.T) {
 		{Name: "svc", URL: "http://example.com", Timeout: 1 * time.Second, Retries: 1},
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/relay", bytes.NewReader([]byte("not json")))
+	req := authedRequest(bytes.NewReader([]byte("not json")))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -122,7 +131,7 @@ func TestRelayRetriesOn5xx(t *testing.T) {
 	})
 
 	body, _ := json.Marshal(RelayRequest{Target: "flaky", Method: "GET", Path: "/"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/relay", bytes.NewReader(body))
+	req := authedRequest(bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -150,7 +159,7 @@ func TestRelayAllRetriesExhausted(t *testing.T) {
 	})
 
 	body, _ := json.Marshal(RelayRequest{Target: "broken", Method: "GET", Path: "/"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/relay", bytes.NewReader(body))
+	req := authedRequest(bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -179,7 +188,7 @@ func TestRelayTimeout(t *testing.T) {
 	})
 
 	body, _ := json.Marshal(RelayRequest{Target: "slow", Method: "GET", Path: "/"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/relay", bytes.NewReader(body))
+	req := authedRequest(bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -201,7 +210,7 @@ func TestRelayDoesNotRetryOn4xx(t *testing.T) {
 	})
 
 	body, _ := json.Marshal(RelayRequest{Target: "client-err", Method: "GET", Path: "/"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/relay", bytes.NewReader(body))
+	req := authedRequest(bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -234,7 +243,7 @@ func TestRelayForwardsAllowedHeaders(t *testing.T) {
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/relay", bytes.NewReader(body))
+	req := authedRequest(bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -263,7 +272,7 @@ func TestRelayRewritesUserAgent(t *testing.T) {
 		Headers: map[string]string{"User-Agent": "evil-client/9000"},
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/relay", bytes.NewReader(body))
+	req := authedRequest(bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -291,7 +300,7 @@ func TestRelayForwardsBody(t *testing.T) {
 		Target: "body-svc", Method: "POST", Path: "/", Body: payloadBytes,
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/relay", bytes.NewReader(body))
+	req := authedRequest(bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -306,7 +315,7 @@ func TestRelayRejectsInvalidMethod(t *testing.T) {
 	})
 
 	body, _ := json.Marshal(RelayRequest{Target: "svc", Method: "CONNECT", Path: "/"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/relay", bytes.NewReader(body))
+	req := authedRequest(bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -322,7 +331,7 @@ func TestRelayRejectsPathWithUserinfo(t *testing.T) {
 
 	// Classic SSRF-shaped path: starts with / but contains an @ that could shift host.
 	body, _ := json.Marshal(RelayRequest{Target: "svc", Method: "GET", Path: "//attacker.com/x"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/relay", bytes.NewReader(body))
+	req := authedRequest(bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -389,12 +398,55 @@ func TestRelayReusesConnections(t *testing.T) {
 	body, _ := json.Marshal(RelayRequest{Target: "svc", Method: "GET", Path: "/"})
 	for i := 0; i < 20; i++ {
 		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/relay", bytes.NewReader(body)))
+		handler.ServeHTTP(rec, authedRequest(bytes.NewReader(body)))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("relay %d: got %d", i, rec.Code)
 		}
 	}
 	if n := conns.Load(); n != 1 {
 		t.Fatalf("expected 1 upstream connection for 20 sequential relays, got %d", n)
+	}
+}
+
+func TestRelayDeniesTargetOutsideKeyScope(t *testing.T) {
+	var hits atomic.Int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }))
+	defer up.Close()
+	handler := newTestHandler(t, []TargetConfig{
+		{Name: "allowed", URL: up.URL, Timeout: time.Second},
+		{Name: "secret", URL: up.URL, Timeout: time.Second},
+	})
+
+	for _, target := range []string{"secret", "does-not-exist"} { // same 403: no target enumeration
+		body, _ := json.Marshal(RelayRequest{Target: target, Method: "GET", Path: "/"})
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/relay", bytes.NewReader(body))
+		r = r.WithContext(auth.WithKey(r.Context(), "scoped", []string{"allowed"}))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, r)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("target %q: expected 403, got %d", target, rec.Code)
+		}
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("upstream was called %d times despite denial", hits.Load())
+	}
+
+	body, _ := json.Marshal(RelayRequest{Target: "allowed", Method: "GET", Path: "/"})
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/relay", bytes.NewReader(body))
+	r = r.WithContext(auth.WithKey(r.Context(), "scoped", []string{"allowed"}))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("in-scope target: expected 200, got %d", rec.Code)
+	}
+}
+
+func TestRelayFailsClosedWithoutPrincipal(t *testing.T) {
+	handler := newTestHandler(t, []TargetConfig{{Name: "svc", URL: "http://127.0.0.1:1", Timeout: time.Second}})
+	body, _ := json.Marshal(RelayRequest{Target: "svc", Method: "GET", Path: "/"})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/relay", bytes.NewReader(body)))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 with no auth principal, got %d", rec.Code)
 	}
 }
