@@ -1,0 +1,30 @@
+commit: 6e7edc7  date: 2026-09-25T03:27:47Z  duration/scenario: 20s
+pi: Raspberry Pi 4 Model B Rev 1.5 | 4 cores | aarch64
+load generator: Darwin arm64 over tailscale
+
+=== baseline: mock direct, c=50 (no relayer) ===
+  Slowest:	0.1258 secs
+  Average:	0.0299 secs
+  Requests/sec:	1673.7250
+  50%% in 0.0280 secs
+  95%% in 0.0461 secs
+  99%% in 0.0638 secs
+  [200]	33520 responses
+
+=== relay via relayer, c=50 ===
+  Slowest:	0.3157 secs
+  Average:	0.0858 secs
+  Requests/sec:	582.2726
+  50%% in 0.0789 secs
+  95%% in 0.1532 secs
+  99%% in 0.1983 secs
+  [200]	11673 responses
+
+=== relay via relayer, c=200 ===
+  Slowest:	5.2315 secs
+  Average:	0.7071 secs
+  Requests/sec:	282.3784
+  50%% in 0.5138 secs
+  95%% in 1.9490 secs
+  99%% in 2.7553 secs
+  [200]	5675 responses

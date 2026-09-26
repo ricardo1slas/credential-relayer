@@ -22,17 +22,28 @@ relayer + redis + nginx mock upstream), runs the scenarios below, saves the outp
   the Mac's own limits. Compare relay vs. baseline rather than reading absolutes.
 - `config.bench.yaml` disables the rate limit and relaxes SSRF guards (http + private IP)
   for the `mock` target only. Never use it outside this stack.
-- Metrics are disabled in the bench stack to keep the measurement to the relay path.
+- Metrics + pprof are enabled in the bench stack (:9090) so profiles can be captured; overhead is small but nonzero.
 - Results are one 20s run per scenario on a Raspberry Pi 4 (4 cores); expect run-to-run noise.
 
-## Latest (Pi 4, 2026-09-24, commit 685f7f7)
+## Results (Pi 4, 4 cores, 2026-09-24)
 
 | Scenario | req/s | p50 | p95 | p99 | errors |
 |---|---|---|---|---|---|
-| mock direct, c=50 | 1636 | 29 ms | 47 ms | 67 ms | 0 |
-| relay, c=50 | 612 | 76 ms | 141 ms | 181 ms | 0 |
-| relay, c=200 | 264 | 575 ms | 2.0 s | 2.9 s | 0 |
+| mock direct, c=50 (ceiling) | 1639 | 29 ms | 48 ms | 67 ms | 0 |
+| relay, c=50 | 976 | 46 ms | 98 ms | 135 ms | 0 |
+| relay, c=200 | 1048 | 168 ms | 409 ms | 580 ms | 0 |
 
-Reading: at c=50 the relayer adds ~50 ms p50 over the direct path and sustains ~600 req/s.
-At c=200 throughput *falls* (CPU-bound on 4 cores, request queuing): the knee is somewhere
-between 50 and 200 concurrent clients. Next: profile (pprof) to find where the time goes.
+### Optimisation log: connection reuse (found via pprof)
+
+Before: relay c=50 = 582 req/s, c=200 = **282 req/s** (throughput *fell* under load, p95 1.95 s).
+The c=200 CPU profile (`results/before/`) had ~80% of samples in `Transport.dialConn`:
+almost every relay opened a new TCP connection. Root cause: `doRelay` did
+`defer cancel()` on the request context, but the response body is read *after* it returns;
+cancelling mid-flight makes net/http discard the connection. Fix: cancel on `Body.Close()`
+(plus a larger idle pool, `MaxIdleConnsPerHost` 10 -> 256). Regression test:
+`TestRelayReusesConnections`.
+
+After: c=50 = 976 req/s (+68%), c=200 = **1048 req/s (3.7x)**, p95 1.95 s -> 0.41 s.
+Remaining CPU is network syscalls; relay c=50 is now ~60% of the direct ceiling.
+
+Inspect a profile: `go tool pprof -top benchmarks/results/<file>.c200.pprof`.

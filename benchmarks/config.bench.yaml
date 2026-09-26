@@ -37,4 +37,6 @@ queue:
   failed_ttl: 1h
 
 metrics:
-  enabled: false
+  enabled: true
+  port: 9090
+  pprof: true

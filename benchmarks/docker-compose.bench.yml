@@ -22,7 +22,7 @@ services:
     depends_on:
       mock: {condition: service_healthy}
       redis: {condition: service_healthy}
-    ports: ["${BIND_IP:-127.0.0.1}:8081:8080"]
+    ports: ["${BIND_IP:-127.0.0.1}:8081:8080", "${BIND_IP:-127.0.0.1}:9090:9090"]  # 9090 = metrics + pprof
     volumes:
       - ./config.bench.yaml:/app/configs/config.yaml:ro
     read_only: true

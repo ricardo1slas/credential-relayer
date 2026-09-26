@@ -78,6 +78,7 @@ type RedisConfig struct {
 type MetricsConfig struct {
 	Enabled bool `koanf:"enabled"`
 	Port    int  `koanf:"port"`
+	Pprof   bool `koanf:"pprof"` // expose /debug/pprof on the metrics port; off by default
 }
 
 func Load(path string) (*Config, error) {

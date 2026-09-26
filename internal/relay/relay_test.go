@@ -3,6 +3,7 @@ package relay
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -367,4 +368,33 @@ func TestStripSensitiveHeaders(t *testing.T) {
 	// itself, so clients wouldn't send it as a forwarded header); assert we don't
 	// promise to strip what we don't strip.
 	_ = out["X-Api-Key"]
+}
+
+// Regression: cancelling the per-request context before the body was read made net/http
+// discard the connection, so every relay paid for a new TCP dial (80% of CPU at c=200).
+func TestRelayReusesConnections(t *testing.T) {
+	var conns atomic.Int32
+	target := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	target.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	target.Start()
+	defer target.Close()
+
+	handler := newTestHandler(t, []TargetConfig{{Name: "svc", URL: target.URL, Timeout: 5 * time.Second}})
+	body, _ := json.Marshal(RelayRequest{Target: "svc", Method: "GET", Path: "/"})
+	for i := 0; i < 20; i++ {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/relay", bytes.NewReader(body)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("relay %d: got %d", i, rec.Code)
+		}
+	}
+	if n := conns.Load(); n != 1 {
+		t.Fatalf("expected 1 upstream connection for 20 sequential relays, got %d", n)
+	}
 }

@@ -160,8 +160,10 @@ func newSafeClient(cfg HandlerConfig, logger zerolog.Logger) *http.Client {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 		IdleConnTimeout:       60 * time.Second,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   10,
+		// Idle pool must cover peak concurrency per upstream, else every burst re-dials
+		// (profiled: 80% of CPU in dialConn at c=200 with the old limit of 10).
+		MaxIdleConns:        512,
+		MaxIdleConnsPerHost: 256,
 	}
 
 	return &http.Client{
@@ -377,13 +379,13 @@ func (h *Handler) relayWithRetries(ctx context.Context, target Target, req Relay
 
 func (h *Handler) doRelay(ctx context.Context, target Target, req RelayRequest) (*http.Response, error) {
 	ctx, cancel := context.WithTimeout(ctx, target.Timeout)
-	defer cancel()
 
 	// Pass the per-target allow_private_ips flag down to DialContext via context.
 	ctx = ctxWithAllowPrivate(ctx, target.AllowPrivateIPs)
 
 	finalURL, err := buildTargetURL(target.BaseURL, req.Path)
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("building URL: %w", err)
 	}
 
@@ -394,6 +396,7 @@ func (h *Handler) doRelay(ctx context.Context, target Target, req RelayRequest) 
 
 	httpReq, err := http.NewRequestWithContext(ctx, req.Method, finalURL, bodyReader)
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("building request: %w", err)
 	}
 
@@ -411,7 +414,26 @@ func (h *Handler) doRelay(ctx context.Context, target Target, req RelayRequest) 
 		httpReq.Header.Set(k, v)
 	}
 
-	return h.client.Do(httpReq)
+	resp, err := h.client.Do(httpReq)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	// The caller reads the body after we return, so the timeout context must live until
+	// Close. Cancelling earlier makes net/http drop the connection instead of reusing it.
+	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+	return resp, nil
+}
+
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
 }
 
 // buildTargetURL resolves a client-supplied path against the target's base URL without

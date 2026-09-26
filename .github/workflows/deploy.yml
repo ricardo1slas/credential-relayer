@@ -3,7 +3,9 @@ name: deploy-pi
 # Auto-deploy to the Raspberry Pi on every push to main, over Tailscale.
 # The runner joins the tailnet as tag:ci (ephemeral) and runs `make deploy-pi`
 # (rsync + docker compose up --build on the Pi). Auth is Tailscale SSH: the
-# ACL must allow tag:ci -> Pi as user <pi-user>. See docs/pi-deploy.md.
+# policy must grant tag:ci -> tag:pi (tcp:22, tcp:8080) and an ssh accept rule.
+# See docs/hardening.md for the exact policy. PI_HOST defaults to the Pi's tailnet IP
+# (no MagicDNS dependency on the runner).
 on:
   push:
     branches: [main]
@@ -24,7 +26,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Connect to tailnet
-        uses: tailscale/github-action@v3
+        uses: tailscale/github-action@v4
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
@@ -36,11 +38,11 @@ jobs:
           printf 'Host *\n  StrictHostKeyChecking accept-new\n' > ~/.ssh/config
 
       - name: Deploy
-        run: make deploy-pi PI=<pi-user>@${{ vars.PI_HOST || '<pi-user>' }}
+        run: make deploy-pi PI=<pi-user>@${{ vars.PI_HOST || '<pi-tailnet-ip>' }}
 
       - name: Smoke test
         run: |
-          host=${{ vars.PI_HOST || '<pi-user>' }}
+          host=${{ vars.PI_HOST || '<pi-tailnet-ip>' }}
           for i in $(seq 10); do
             curl -fsS -m 5 http://$host:8080/ready && exit 0
             sleep 3

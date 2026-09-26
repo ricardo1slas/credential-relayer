@@ -174,6 +174,27 @@ Only expose the relayer (`:8080`). Never expose Redis (`:6379`).
 > AWS deployment — they demonstrate the cloud path without you having to `apply`
 > (and pay for) it.
 
+### Performance
+
+Measured on a Raspberry Pi 4 (4 cores) with a local upstream, load from a Mac over Tailscale
+(`make bench`, details in [`benchmarks/`](benchmarks/README.md)):
+
+| Scenario | req/s | p50 | p95 |
+|---|---|---|---|
+| relay, 50 concurrent | 976 | 46 ms | 98 ms |
+| relay, 200 concurrent | 1048 | 168 ms | 409 ms |
+
+A CPU profile (pprof) showed ~80% of time dialing new TCP connections: the per-request
+timeout context was cancelled before the response body was read, so net/http discarded every
+connection. Cancelling on `Body.Close()` instead took 200-concurrency throughput from 282 to
+1048 req/s (3.7x); a regression test pins the behaviour.
+
+### Alerting & security
+
+Prometheus rules (5xx rate, latency, upstream failures, queue backlog, dead-lettered jobs, auth-failure
+and rate-limit spikes) route through Alertmanager to email. Hardening notes, the Tailscale deny-by-default
+policy, and the app-security roadmap live in [`docs/hardening.md`](docs/hardening.md).
+
 ### Deploy to AWS
 
 ```bash

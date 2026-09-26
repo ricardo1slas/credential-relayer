@@ -6,7 +6,7 @@ services:
     # Run as the redis user directly so the entrypoint doesn't need CAP_SETUID to drop privs.
     user: redis
     ports:
-      - "${BIND_IP:-127.0.0.1}:6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     read_only: true
@@ -63,6 +63,7 @@ services:
     restart: unless-stopped
     depends_on:
       - relayer
+      - alertmanager
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.retention.time=7d"
@@ -70,11 +71,44 @@ services:
       - "${BIND_IP:-127.0.0.1}:9091:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus-data:/prometheus
     security_opt:
       - no-new-privileges:true
     mem_limit: 512m
     pids_limit: 200
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    container_name: relayer-alertmanager
+    restart: unless-stopped
+    # Set SMTP_USER / SMTP_PASS (app password) / ALERT_EMAIL in infra/docker/.env
+    environment:
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com:587}
+      SMTP_USER: ${SMTP_USER:-unset@localhost.invalid}
+      SMTP_PASS: ${SMTP_PASS:-unset}
+      ALERT_EMAIL: ${ALERT_EMAIL:-unset@localhost.invalid}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        sed -e "s|__SMTP_HOST__|$$SMTP_HOST|" -e "s|__SMTP_USER__|$$SMTP_USER|g"
+        -e "s|__SMTP_PASS__|$$SMTP_PASS|" -e "s|__ALERT_EMAIL__|$$ALERT_EMAIL|"
+        /etc/alertmanager/alertmanager.tmpl.yml > /tmp/alertmanager.yml &&
+        exec /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager
+    ports:
+      - "${BIND_IP:-127.0.0.1}:9093:9093"
+    volumes:
+      - ./alertmanager/alertmanager.tmpl.yml:/etc/alertmanager/alertmanager.tmpl.yml:ro
+      - alertmanager-data:/alertmanager
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    pids_limit: 100
 
   grafana:
     image: grafana/grafana:11.4.0
@@ -101,3 +135,4 @@ volumes:
   redis-data:
   prometheus-data:
   grafana-data:
+  alertmanager-data:

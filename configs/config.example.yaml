@@ -50,5 +50,6 @@ queue:
   failed_ttl: 24h
 
 metrics:
+  # pprof: false   # expose /debug/pprof on the metrics port (never publicly)
   enabled: true
   port: 9090

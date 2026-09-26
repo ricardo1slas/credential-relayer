@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/pprof" // #nosec G108 -- registered on the private metrics mux only, opt-in via metrics.pprof
 	"os"
 	"os/signal"
 	"syscall"
@@ -144,6 +145,12 @@ func main() {
 	if m != nil {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", m.Handler())
+		if cfg.Metrics.Pprof {
+			mux.HandleFunc("/debug/pprof/", pprof.Index)
+			mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+			mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+			logger.Warn().Msg("pprof enabled on metrics port")
+		}
 		metricsSrv = &http.Server{
 			Addr:              fmt.Sprintf(":%d", cfg.Metrics.Port),
 			Handler:           mux,

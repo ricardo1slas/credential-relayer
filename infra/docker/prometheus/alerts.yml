@@ -1,0 +1,64 @@
+groups:
+  - name: relayer
+    rules:
+      - alert: RelayerDown
+        expr: up{job="relayer"} == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Relayer is down (Prometheus cannot scrape it)"
+
+      - alert: HighServerErrorRate
+        expr: >
+          100 * sum(rate(relayer_http_requests_total{status=~"5.."}[5m]))
+          / clamp_min(sum(rate(relayer_http_requests_total[5m])), 1e-9) > 5
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $value | printf \"%.1f\" }}% of requests are returning 5xx"
+
+      - alert: HighLatencyP95
+        expr: histogram_quantile(0.95, sum by (le) (rate(relayer_http_request_duration_seconds_bucket[5m]))) > 2
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "p95 request latency is {{ $value | printf \"%.2f\" }}s"
+
+      - alert: UpstreamFailing
+        expr: >
+          sum by (target) (rate(relayer_relay_requests_total{outcome="error"}[5m]))
+          / sum by (target) (rate(relayer_relay_requests_total[5m])) > 0.2
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Target {{ $labels.target }}: over 20% of relays failing after retries"
+
+      - alert: QueueBacklog
+        expr: relayer_queue_depth > 100
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} async jobs waiting for over 10 minutes"
+
+      - alert: DeadLetteredJobs
+        expr: increase(relayer_jobs_processed_total{status="dead"}[15m]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} job(s) exhausted retries and were dead-lettered"
+
+  - name: security
+    rules:
+      - alert: AuthFailureSpike
+        # Sustained 401s = someone guessing API keys, or a client with a revoked key.
+        expr: sum(rate(relayer_http_requests_total{status="401"}[5m])) > 0.5
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value | printf \"%.1f\" }} failed auth attempts/s: possible API key guessing"
+
+      - alert: RateLimitSpike
+        expr: sum(rate(relayer_http_requests_total{status="429"}[5m])) > 5
+        for: 5m
+        labels: {severity: info}
+        annotations:
+          summary: "{{ $value | printf \"%.1f\" }} requests/s being rate limited: abusive or misconfigured client"

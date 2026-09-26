@@ -1,0 +1,64 @@
+// Tailscale policy file for this tailnet. Paste the WHOLE file over the contents of
+// Access controls -> JSON editor (https://login.tailscale.com/admin/acls/file), then Save.
+// The console runs "tests" before saving and refuses the save if any fail.
+//
+// Assumes your devices are: your laptop(s) + the Pi, all owned by your user. Back up the
+// current policy text first. After saving, run on the Pi:
+//     sudo tailscale up --ssh --advertise-tags=tag:pi   (or admin console -> Machines -> Edit ACL tags)
+{
+  // Who may apply each tag. Only tailnet admins (you).
+  "tagOwners": {
+    "tag:pi": ["autogroup:admin"],
+    "tag:ci": ["autogroup:admin"]
+  },
+
+  // Deny by default: only what is listed here is reachable.
+  "grants": [
+    // Your own devices can reach each other (laptop <-> phone, etc.).
+    { "src": ["autogroup:member"], "dst": ["autogroup:self"], "ip": ["*"] },
+
+    // You -> Pi services. A tagged Pi is not "self", so it needs its own grant.
+    // 22 ssh, 8080 relayer, 3000 grafana, 9091 prometheus, 9093 alertmanager.
+    {
+      "src": ["autogroup:member"],
+      "dst": ["tag:pi"],
+      "ip": ["tcp:22", "tcp:8080", "tcp:3000", "tcp:9091", "tcp:9093"]
+    },
+
+    // GitHub Actions runner -> Pi: ssh (deploy) and the relayer (smoke test). Nothing else.
+    { "src": ["tag:ci"], "dst": ["tag:pi"], "ip": ["tcp:22", "tcp:8080"] }
+
+    // Note: tag:pi has no grants as a source, so a compromised Pi cannot reach your laptop.
+  ],
+
+  "ssh": [
+    // Keep the default: SSH between your own devices needs a periodic re-auth check.
+    {
+      "action": "check",
+      "src": ["autogroup:member"],
+      "dst": ["autogroup:self"],
+      "users": ["autogroup:nonroot", "root"]
+    },
+    // You -> Pi as <pi-user>, re-auth every 12h.
+    {
+      "action": "check",
+      "src": ["autogroup:member"],
+      "dst": ["tag:pi"],
+      "users": ["<pi-user>"],
+      "checkPeriod": "12h"
+    },
+    // CI -> Pi as <pi-user>. Must be "accept": "check" would wait for a human in a browser.
+    { "action": "accept", "src": ["tag:ci"], "dst": ["tag:pi"], "users": ["<pi-user>"] }
+  ],
+
+  "tests": [
+    // CI can deploy and smoke-test, but cannot touch Grafana/Prometheus/Alertmanager.
+    {
+      "src": "tag:ci",
+      "accept": ["tag:pi:22", "tag:pi:8080"],
+      "deny": ["tag:pi:3000", "tag:pi:9091", "tag:pi:9093", "tag:pi:6379"]
+    },
+    // A compromised Pi must not be able to reach the laptop.
+    { "src": "tag:pi", "deny": ["<device-tailnet-ip>:22", "<device-tailnet-ip>:5900"] }
+  ]
+}

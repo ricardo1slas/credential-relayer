@@ -25,17 +25,26 @@ make deploy-pi PI=user@host
 Every push to `main` joins the tailnet as an ephemeral `tag:ci` node and runs
 `make deploy-pi`, then curls `/ready`.
 
-Tailscale admin setup (once):
-1. **ACL** (`tagOwners` + ssh rule):
-   ```json
-   "tagOwners": {"tag:ci": ["autogroup:admin"]},
-   "ssh": [{"action": "accept", "src": ["tag:ci"], "dst": ["autogroup:self", "<pi-tag-or-user>"], "users": ["<pi-user>"]}]
-   ```
-   Least privilege: tag:ci should reach the Pi only. Tagging the Pi (`tag:pi`)
-   and using `dst: ["tag:pi"]` is tighter than user-owned devices.
-2. **OAuth client** (Settings → OAuth clients): scope `auth_keys` (write), tag `tag:ci`.
+Tailscale admin setup (once), full policy JSON in [`hardening.md`](hardening.md#2-tailscale-deny-by-default-policy):
+1. Add `tag:pi` / `tag:ci` to `tagOwners`, the grants and ssh rules, then on the Pi:
+   `sudo tailscale up --ssh --advertise-tags=tag:pi   # or: admin console -> Machines -> Edit ACL tags`.
+2. **OAuth client** (Settings -> Trust credentials): scope `auth_keys` (write), tag `tag:ci`.
 3. GitHub repo secrets: `TS_OAUTH_CLIENT_ID`, `TS_OAUTH_SECRET`.
-   Optional repo variable `PI_HOST` (defaults to MagicDNS name `<pi-user>`).
+   Optional repo variable `PI_HOST` (defaults to the Pi's tailnet IP).
+
+## Email alerts
+Prometheus rules (`infra/docker/prometheus/alerts.yml`) -> Alertmanager -> email. Create a Gmail
+[app password](https://myaccount.google.com/apppasswords) (needs 2-step verification), then on the Pi:
+```bash
+cat >> ~/relayer/infra/docker/.env <<EOT
+SMTP_USER=you@gmail.com
+SMTP_PASS=<16-char app password>
+ALERT_EMAIL=you@gmail.com
+EOT
+cd ~/relayer/infra/docker && BIND_IP=$(tailscale ip -4) docker compose up -d alertmanager
+```
+Test: `curl -XPOST http://<pi>:9093/api/v2/alerts -H 'Content-Type: application/json' -d '[{"labels":{"alertname":"TestAlert"}}]'`
+(mail arrives after `group_wait`, 30s). Alertmanager UI: `http://<pi>:9093`.
 
 ## Access (from any tailnet device)
 | What | URL |

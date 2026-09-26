@@ -29,5 +29,8 @@ run() { # name, hey args...
 hey -z 3s -c 10 -m POST -H "X-API-Key: $KEY" -d "$BODY" "http://$HOST:8081/api/v1/relay" >/dev/null  # warmup
 run "baseline: mock direct, c=50 (no relayer)"    -c 50  "http://$HOST:8082/"
 run "relay via relayer, c=50"                     -c 50  -m POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d "$BODY" "http://$HOST:8081/api/v1/relay"
+# CPU profile (15s) captured mid-run; inspect: go tool pprof -top <file>
+( sleep 3; curl -s -o "${OUT%.txt}.c200.pprof" "http://$HOST:9090/debug/pprof/profile?seconds=15" ) &
 run "relay via relayer, c=200"                    -c 200 -m POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d "$BODY" "http://$HOST:8081/api/v1/relay"
-echo -e "\nsaved: $OUT"
+wait
+echo -e "\nsaved: $OUT (+ .c200.pprof)"
