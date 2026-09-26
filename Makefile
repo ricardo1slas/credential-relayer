@@ -71,7 +71,18 @@ sync-pi:
 		--filter='P configs/config.yaml' --filter='P infra/docker/.env' --include configs/config.yaml --filter=':- .gitignore' ./ $(PI):relayer/
 
 deploy-pi: sync-pi
-	ssh $(PI) 'cd relayer/infra/docker && BIND_IP=$$(tailscale ip -4) docker compose up -d --build'
+	# restart: config.yaml is a bind mount, so a config-only change does not recreate the container
+	ssh $(PI) 'cd relayer/infra/docker && BIND_IP=$$(tailscale ip -4) docker compose up -d --build && docker compose restart relayer'
+
+# Generate an API key and the config line for it. Hand the key to the client; put only the hash in config.
+new-key:
+	@k=$$(openssl rand -hex 32); echo "API key (give to the client, do not store it): $$k"; \
+	echo "config:  key_sha256: \"$$(printf %s $$k | shasum -a 256 | cut -d' ' -f1)\""
+
+# Mixed synthetic traffic against the Pi so the Grafana dashboard moves (Ctrl-C to stop).
+# make traffic ARGS=--burst
+traffic:
+	./scripts/traffic.sh $(ARGS)
 
 # Isolated throwaway stack on the Pi; results land in benchmarks/results/.
 bench:
