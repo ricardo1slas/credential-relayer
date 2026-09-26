@@ -8,12 +8,12 @@
 #   ./scripts/loadtest.sh [BASE_URL] [API_KEY] [REQUESTS] [CONCURRENCY] [TARGET]
 #
 # Examples:
-#   ./scripts/loadtest.sh http://localhost:8080 <revoked-dev-key>
+#   ./scripts/loadtest.sh http://localhost:8080 "$API_KEY"
 #   ./scripts/loadtest.sh https://relayer.example.com "$API_KEY" 5000 50 httpbin
 set -euo pipefail
 
 BASE_URL="${1:-http://localhost:8080}"
-API_KEY="${2:-<revoked-dev-key>}"
+API_KEY="${2:?usage: loadtest.sh [BASE_URL] API_KEY [REQUESTS] [CONCURRENCY] [TARGET]}"
 REQUESTS="${3:-1000}"
 CONCURRENCY="${4:-20}"
 TARGET="${5:-httpbin}"

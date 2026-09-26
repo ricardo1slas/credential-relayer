@@ -37,11 +37,11 @@ clean:
 	rm -rf $(BUILD_DIR) coverage.out
 
 # Load test against a running instance. Override URL/API key as needed:
-#   make loadtest URL=http://localhost:8080 API_KEY=<revoked-dev-key>
+#   make loadtest URL=http://localhost:8080 API_KEY=<key>
 URL ?= http://localhost:8080
-API_KEY ?= <revoked-dev-key>
 loadtest:
-	./scripts/loadtest.sh $(URL) $(API_KEY)
+	@test -n "$(API_KEY)" || { echo "usage: make loadtest URL=... API_KEY=<key>"; exit 1; }
+	./scripts/loadtest.sh $(URL) '$(API_KEY)'
 
 docker-build:
 	$(COMPOSE) build
