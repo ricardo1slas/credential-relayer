@@ -69,6 +69,8 @@ This project exists to demonstrate **production-grade cloud/DevOps skills** thro
 
 Based on [OpenZeppelin Relayer](https://github.com/openzeppelin/openzeppelin-relayer), which relays blockchain transactions. We took the same architectural patterns (relay, queue, retry, config, metrics) but made it **chain-agnostic and general-purpose** -- it relays any HTTP request, not just blockchain transactions.
 
+> **Update (2026-09-26): what it became.** The project grew from "a smart proxy" into a **credential broker**: upstream secrets live only on the relayer and are injected into outbound requests, every relayer key is scoped to specific targets, each target can restrict methods, paths and body size, and a streaming proxy lets SDKs and agents (Gemini CLI, the Anthropic SDK) use it by changing only their base URL. That also brought it back toward OpenZeppelin's core idea (the relayer holds the key; clients only submit intents), generalized from blockchain signing keys to API secrets. The implementation shares no code with it (Rust there, Go here), and the hard problems differ: transaction lifecycle there, safe credential use over HTTP here. See Phase 12 (§16).
+
 ---
 
 ## 2. Architecture Overview
@@ -105,6 +107,18 @@ Based on [OpenZeppelin Relayer](https://github.com/openzeppelin/openzeppelin-rel
                     │  └──────────────────────┘                          │
                     └─────────────────────────────────────────────────────┘
 ```
+
+> **Update (2026-09-26): current request flow.** The diagram above is the original design. Today every entry point goes through one gate, and the deployment is a Raspberry Pi on Tailscale (§15) rather than AWS:
+>
+> ```
+> client --relayer key--> auth (hashed keys) --> rate limit --> Authorize: key scope, method, path, body policy
+>    /relay   --> retries + backoff -----------------\
+>    /webhook --> Redis queue --> worker pool --------+--> secret injection --> SSRF-hardened client --> upstream
+>    /proxy   --> streaming passthrough (no retries) -/        |                                          |
+>                                                              \--- redaction of echoed secrets <---------/
+> ```
+>
+> Refusals, upstream outcomes and stream timing are counted per key and target and shown on four Grafana dashboards (§13).
 
 ### Request Flow (Synchronous Relay)
 
