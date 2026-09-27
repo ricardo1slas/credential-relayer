@@ -62,6 +62,30 @@ services:
       retries: 3
       start_period: 5s
 
+  # Host metrics for the Pi dashboard. pid: host and a read-only view of / are what node_exporter
+  # needs to see host CPU, memory and filesystems; no port is published (Prometheus scrapes it on
+  # the compose network). Network-interface stats would need host networking, deliberately not
+  # used, so they are absent.
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    container_name: relayer-node-exporter
+    restart: unless-stopped
+    command:
+      - "--path.rootfs=/host"
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(dev|proc|run|sys|var/lib/docker/.+|snap/.+)($$|/)"
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 64m
+    pids_limit: 50
+
   prometheus:
     image: prom/prometheus:v3.1.0
     container_name: relayer-prometheus
@@ -71,7 +95,9 @@ services:
       - alertmanager
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.retention.time=7d"
+      # 35d: the 30-day SLO panels need a full window. The size cap protects the SD card.
+      - "--storage.tsdb.retention.time=35d"
+      - "--storage.tsdb.retention.size=1GB"
     ports:
       - "${BIND_IP:-127.0.0.1}:9091:9090"
     volumes:

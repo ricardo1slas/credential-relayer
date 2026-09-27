@@ -1,23 +1,274 @@
 {
-  "annotations": { "list": [] },
+  "annotations": {
+    "list": []
+  },
   "editable": true,
-  "graphTooltip": 0,
+  "graphTooltip": 1,
   "title": "Private Relayer",
   "uid": "private-relayer",
-  "tags": ["relayer"],
+  "tags": [
+    "relayer"
+  ],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
-  "time": { "from": "now-1h", "to": "now" },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "refresh": "10s",
-  "templating": { "list": [] },
+  "templating": {
+    "list": []
+  },
   "panels": [
+    {
+      "id": 8,
+      "title": "Availability, 30 days (target 99.5%)",
+      "type": "stat",
+      "description": "Share of API requests not failed by the relayer itself: 5xx except 502 (a 502 means the upstream failed; tracked on the LLM dashboard). Health probes excluded.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(1 - (sum(increase(relayer_http_requests_total{route!~\"/health|/ready\",status=~\"5..\",status!=\"502\"}[30d])) or vector(0)) / sum(increase(relayer_http_requests_total{route!~\"/health|/ready\"}[30d])))",
+          "legendFormat": "",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#d03b3b",
+                "value": null
+              },
+              {
+                "color": "#fab219",
+                "value": 0.995
+              },
+              {
+                "color": "#0ca30c",
+                "value": 0.999
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "justifyMode": "auto",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 9,
+      "title": "Error budget remaining, 30 days",
+      "type": "gauge",
+      "description": "0.5% of requests may fail in 30 days. 100% = none spent; 0% = SLO breached.",
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "clamp_min(1 - (1 - (1 - (sum(increase(relayer_http_requests_total{route!~\"/health|/ready\",status=~\"5..\",status!=\"502\"}[30d])) or vector(0)) / sum(increase(relayer_http_requests_total{route!~\"/health|/ready\"}[30d])))) / 0.005, 0)",
+          "legendFormat": "",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#d03b3b",
+                "value": null
+              },
+              {
+                "color": "#fab219",
+                "value": 0.25
+              },
+              {
+                "color": "#0ca30c",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showThresholdMarkers": false,
+        "showThresholdLabels": false,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Burn rate, last hour",
+      "type": "stat",
+      "description": "How fast the budget is being spent. 1x = exactly on budget for 30 days; above 14.4x for an hour pages (SLOBurnRateFast).",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(1 - (1 - (sum(increase(relayer_http_requests_total{route!~\"/health|/ready\",status=~\"5..\",status!=\"502\"}[1h])) or vector(0)) / sum(increase(relayer_http_requests_total{route!~\"/health|/ready\"}[1h])))) / 0.005",
+          "legendFormat": "",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "x",
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              },
+              {
+                "color": "#fab219",
+                "value": 6
+              },
+              {
+                "color": "#d03b3b",
+                "value": 14.4
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "justifyMode": "auto",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 11,
+      "title": "Relayer uptime, 30 days",
+      "type": "stat",
+      "description": "Share of Prometheus scrapes that reached the relayer.",
+      "gridPos": {
+        "x": 18,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg_over_time(up{job=\"relayer\"}[30d])",
+          "legendFormat": "",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#d03b3b",
+                "value": null
+              },
+              {
+                "color": "#fab219",
+                "value": 0.995
+              },
+              {
+                "color": "#0ca30c",
+                "value": 0.999
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "justifyMode": "auto",
+        "wideLayout": true
+      }
+    },
     {
       "id": 1,
       "title": "HTTP request rate (req/s by route)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
       "targets": [
         {
           "expr": "sum by (route) (rate(relayer_http_requests_total[1m]))",
@@ -29,8 +280,18 @@
       "id": 2,
       "title": "HTTP error rate (4xx/5xx %)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
       "targets": [
         {
           "expr": "100 * sum(rate(relayer_http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(relayer_http_requests_total[5m])), 1)",
@@ -46,20 +307,49 @@
       "id": 3,
       "title": "HTTP latency (p50 / p95 / p99)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
       "targets": [
-        { "expr": "histogram_quantile(0.50, sum by (le) (rate(relayer_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p50" },
-        { "expr": "histogram_quantile(0.95, sum by (le) (rate(relayer_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p95" },
-        { "expr": "histogram_quantile(0.99, sum by (le) (rate(relayer_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p99" }
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(relayer_http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(relayer_http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(relayer_http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p99"
+        }
       ]
     },
     {
       "id": 4,
       "title": "Relay outcomes (per target)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
-      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
       "targets": [
         {
           "expr": "sum by (target, outcome) (rate(relayer_relay_requests_total[1m]))",
@@ -71,16 +361,41 @@
       "id": 5,
       "title": "Pending queue depth",
       "type": "stat",
-      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 16 },
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
-      "targets": [{ "expr": "relayer_queue_depth", "legendFormat": "depth" }]
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 20
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "relayer_queue_depth",
+          "legendFormat": "depth"
+        }
+      ]
     },
     {
       "id": 6,
       "title": "Jobs processed (rate by status)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 10, "x": 6, "y": 16 },
-      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": {
+        "h": 8,
+        "w": 10,
+        "x": 6,
+        "y": 20
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
       "targets": [
         {
           "expr": "sum by (status) (rate(relayer_jobs_processed_total[5m]))",
@@ -92,8 +407,18 @@
       "id": 7,
       "title": "Relay attempts p95 (per target)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 20
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum by (le, target) (rate(relayer_relay_attempts_bucket[5m])))",

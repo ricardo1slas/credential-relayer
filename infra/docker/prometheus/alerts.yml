@@ -18,7 +18,9 @@ groups:
           summary: "{{ $value | printf \"%.1f\" }}% of requests are returning 5xx"
 
       - alert: HighLatencyP95
-        expr: histogram_quantile(0.95, sum by (le) (rate(relayer_http_request_duration_seconds_bucket[5m]))) > 2
+        # Proxied streams (LLM answers) legitimately last seconds; their latency is tracked by
+        # relayer_stream_ttfb_seconds instead.
+        expr: histogram_quantile(0.95, sum by (le) (rate(relayer_http_request_duration_seconds_bucket{route!~".*/proxy/.*"}[5m]))) > 2
         for: 5m
         labels: {severity: warning}
         annotations:
@@ -62,3 +64,54 @@ groups:
         labels: {severity: info}
         annotations:
           summary: "{{ $value | printf \"%.1f\" }} requests/s being rate limited: abusive or misconfigured client"
+
+  # SLO: 99.5% of API requests not failed by the relayer itself (5xx except 502, which means the
+  # upstream failed). Multi-window burn-rate alert (Google SRE workbook): 14.4x burns 2% of the
+  # 30-day budget in an hour; the 5m window makes it stop firing quickly once fixed.
+  - name: slo
+    rules:
+      - alert: SLOBurnRateFast
+        expr: >
+          (
+            sum(rate(relayer_http_requests_total{route!~"/health|/ready",status=~"5..",status!="502"}[1h]))
+            / sum(rate(relayer_http_requests_total{route!~"/health|/ready"}[1h]))
+          ) > 14.4 * 0.005
+          and
+          (
+            sum(rate(relayer_http_requests_total{route!~"/health|/ready",status=~"5..",status!="502"}[5m]))
+            / sum(rate(relayer_http_requests_total{route!~"/health|/ready"}[5m]))
+          ) > 14.4 * 0.005
+        labels: {severity: critical}
+        annotations:
+          summary: "Error budget burning at over 14.4x: the 30-day availability SLO (99.5%) is at risk"
+
+  - name: upstreams
+    rules:
+      - alert: UpstreamQuotaExhausted
+        expr: sum by (target) (increase(relayer_upstream_responses_total{code="429"}[10m])) > 5
+        labels: {severity: warning}
+        annotations:
+          summary: "Target {{ $labels.target }} answered 429 {{ $value | printf \"%.0f\" }} times in 10m (quota/rate limit exhausted)"
+
+  - name: host
+    rules:
+      - alert: NodeExporterDown
+        expr: up{job="node"} == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Host metrics missing: node-exporter is not being scraped"
+
+      - alert: PiCPUHot
+        expr: max(node_thermal_zone_temp{type="cpu-thermal"}) > 78
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Pi CPU at {{ $value | printf \"%.0f\" }} °C; it throttles at 80 °C"
+
+      - alert: SDCardFilling
+        expr: 1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} > 0.85
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "SD card {{ $value | humanizePercentage }} full"
