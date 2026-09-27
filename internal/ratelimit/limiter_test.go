@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ricardo1slas/private_relayer/internal/auth"
+	"github.com/ricardo1slas/credential-relayer/internal/auth"
 )
 
 func TestLimiter_AllowsUnderLimit(t *testing.T) {

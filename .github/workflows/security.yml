@@ -62,13 +62,13 @@ jobs:
           context: .
           file: infra/docker/Dockerfile
           load: true
-          tags: private-relayer:scan
+          tags: credential-relayer:scan
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: trivy image scan
         uses: aquasecurity/trivy-action@0.35.0
         with:
-          image-ref: private-relayer:scan
+          image-ref: credential-relayer:scan
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: true

@@ -1,4 +1,4 @@
-// Package client is a small, dependency-free Go SDK for the Private Relayer API.
+// Package client is a small, dependency-free Go SDK for the Credential Relayer API.
 //
 // It wraps the three public endpoints -- synchronous relay, async webhook
 // enqueue, and job status polling -- and handles auth, JSON encoding, and error
@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-// Client talks to a Private Relayer instance. Construct it with New.
+// Client talks to a Credential Relayer instance. Construct it with New.
 type Client struct {
 	baseURL    string
 	apiKey     string

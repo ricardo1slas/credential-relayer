@@ -5,8 +5,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/ricardo1slas/private_relayer/internal/queue"
-	"github.com/ricardo1slas/private_relayer/internal/relay"
+	"github.com/ricardo1slas/credential-relayer/internal/queue"
+	"github.com/ricardo1slas/credential-relayer/internal/relay"
 )
 
 type webhookRequest struct {

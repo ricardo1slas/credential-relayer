@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/ricardo1slas/private_relayer/internal/relay"
+	"github.com/ricardo1slas/credential-relayer/internal/relay"
 )
 
 // proxyHandler serves /api/v1/proxy/{target}/*. The upstream path is cut from the *escaped*

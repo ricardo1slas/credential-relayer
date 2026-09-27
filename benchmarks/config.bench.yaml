@@ -18,7 +18,7 @@ rate_limit:
 relay:
   max_request_bytes: 1048576
   max_response_bytes: 10485760
-  user_agent: "private-relayer-bench"
+  user_agent: "credential-relayer-bench"
   max_redirects: 0
   targets:
     - name: "mock"

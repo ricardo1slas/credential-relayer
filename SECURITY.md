@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report security issues **privately** through GitHub's
-[private vulnerability reporting](https://github.com/ricardo1slas/private_relayer/security/advisories/new)
+[private vulnerability reporting](https://github.com/ricardo1slas/credential-relayer/security/advisories/new)
 (Security tab -> "Report a vulnerability"). Do not open a public issue.
 
 Include what you found, how to reproduce it, and the impact you expect. You should get an

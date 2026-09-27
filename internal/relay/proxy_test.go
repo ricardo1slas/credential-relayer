@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ricardo1slas/private_relayer/internal/auth"
+	"github.com/ricardo1slas/credential-relayer/internal/auth"
 	"github.com/rs/zerolog"
 )
 

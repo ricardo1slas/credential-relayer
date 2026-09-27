@@ -1,4 +1,4 @@
-module github.com/ricardo1slas/private_relayer
+module github.com/ricardo1slas/credential-relayer
 
 go 1.26.6
 

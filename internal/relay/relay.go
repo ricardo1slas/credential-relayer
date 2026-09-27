@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/ricardo1slas/private_relayer/internal/auth"
+	"github.com/ricardo1slas/credential-relayer/internal/auth"
 	"io"
 	"net"
 	"net/http"
@@ -35,7 +35,7 @@ func (c HandlerConfig) withDefaults() HandlerConfig {
 		c.MaxResponseBytes = 10 << 20
 	}
 	if c.UserAgent == "" {
-		c.UserAgent = "private-relayer/0.1"
+		c.UserAgent = "credential-relayer/0.1"
 	}
 	if c.MaxRedirects < 0 {
 		c.MaxRedirects = 0

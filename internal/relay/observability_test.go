@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ricardo1slas/private_relayer/internal/auth"
+	"github.com/ricardo1slas/credential-relayer/internal/auth"
 )
 
 // unscopedCtx is a caller allowed every target (what the auth middleware sets for an

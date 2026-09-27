@@ -23,13 +23,13 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 
-	"github.com/ricardo1slas/private_relayer/internal/api"
-	"github.com/ricardo1slas/private_relayer/internal/auth"
-	"github.com/ricardo1slas/private_relayer/internal/metrics"
-	"github.com/ricardo1slas/private_relayer/internal/queue"
-	"github.com/ricardo1slas/private_relayer/internal/ratelimit"
-	"github.com/ricardo1slas/private_relayer/internal/relay"
-	"github.com/ricardo1slas/private_relayer/pkg/client"
+	"github.com/ricardo1slas/credential-relayer/internal/api"
+	"github.com/ricardo1slas/credential-relayer/internal/auth"
+	"github.com/ricardo1slas/credential-relayer/internal/metrics"
+	"github.com/ricardo1slas/credential-relayer/internal/queue"
+	"github.com/ricardo1slas/credential-relayer/internal/ratelimit"
+	"github.com/ricardo1slas/credential-relayer/internal/relay"
+	"github.com/ricardo1slas/credential-relayer/pkg/client"
 )
 
 const (

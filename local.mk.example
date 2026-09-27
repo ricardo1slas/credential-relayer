@@ -5,4 +5,4 @@
 PI = <user>@<pi-host>
 # make traffic: relayer address and a file holding a key allowed to use the httpbin target
 export RELAYER_URL = http://<pi-tailnet-ip>:8080
-export RELAYER_API_KEY_FILE = ~/.config/private-relayer/dev-client.key
+export RELAYER_API_KEY_FILE = ~/.config/credential-relayer/dev-client.key

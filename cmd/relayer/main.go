@@ -10,13 +10,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ricardo1slas/private_relayer/internal/api"
-	"github.com/ricardo1slas/private_relayer/internal/auth"
-	"github.com/ricardo1slas/private_relayer/internal/config"
-	"github.com/ricardo1slas/private_relayer/internal/metrics"
-	"github.com/ricardo1slas/private_relayer/internal/queue"
-	"github.com/ricardo1slas/private_relayer/internal/ratelimit"
-	"github.com/ricardo1slas/private_relayer/internal/relay"
+	"github.com/ricardo1slas/credential-relayer/internal/api"
+	"github.com/ricardo1slas/credential-relayer/internal/auth"
+	"github.com/ricardo1slas/credential-relayer/internal/config"
+	"github.com/ricardo1slas/credential-relayer/internal/metrics"
+	"github.com/ricardo1slas/credential-relayer/internal/queue"
+	"github.com/ricardo1slas/credential-relayer/internal/ratelimit"
+	"github.com/ricardo1slas/credential-relayer/internal/relay"
 	"github.com/rs/zerolog"
 )
 

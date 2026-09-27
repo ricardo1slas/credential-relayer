@@ -1,7 +1,7 @@
-# Private Relayer
+# Credential Relayer
 
-[![CI](https://github.com/ricardo1slas/private_relayer/actions/workflows/ci.yml/badge.svg)](https://github.com/ricardo1slas/private_relayer/actions/workflows/ci.yml)
-[![Security](https://github.com/ricardo1slas/private_relayer/actions/workflows/security.yml/badge.svg)](https://github.com/ricardo1slas/private_relayer/actions/workflows/security.yml)
+[![CI](https://github.com/ricardo1slas/credential-relayer/actions/workflows/ci.yml/badge.svg)](https://github.com/ricardo1slas/credential-relayer/actions/workflows/ci.yml)
+[![Security](https://github.com/ricardo1slas/credential-relayer/actions/workflows/security.yml/badge.svg)](https://github.com/ricardo1slas/credential-relayer/actions/workflows/security.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **A self-hosted credential broker for APIs and LLMs, written in Go.** Clients get scoped, revocable
@@ -96,7 +96,7 @@ Four Grafana dashboards are provisioned with the stack (colors from a colorblind
 
 | Dashboard | Shows |
 |---|---|
-| **Private Relayer** | Traffic, errors, latency, queue, and the SLO row: 30-day availability (target 99.5%), error budget remaining, burn rate, uptime |
+| **Credential Relayer** | Traffic, errors, latency, queue, and the SLO row: 30-day availability (target 99.5%), error budget remaining, burn rate, uptime |
 | **Security & usage** | Everything the gate refused, by reason (scope, method, path, body, unknown target), a per-key usage table, one panel per key |
 | **LLM & upstreams** | Time to first byte as a heatmap (the whole latency distribution over time), p50/p95, upstream outcomes by status class, quota exhaustion (upstream 429s) |
 | **Pi host** | CPU temperature (a Pi 4 throttles at 80 °C), clock speed vs max, CPU, load, memory, SD card |

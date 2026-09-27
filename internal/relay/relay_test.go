@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ricardo1slas/private_relayer/internal/auth"
+	"github.com/ricardo1slas/credential-relayer/internal/auth"
 	"github.com/rs/zerolog"
 )
 
@@ -276,7 +276,7 @@ func TestRelayRewritesUserAgent(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
-	if receivedUA != "private-relayer/0.1" {
+	if receivedUA != "credential-relayer/0.1" {
 		t.Errorf("expected neutral UA, got %q", receivedUA)
 	}
 }

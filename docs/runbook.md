@@ -1,4 +1,4 @@
-# Private Relayer -- Operations Runbook
+# Credential Relayer -- Operations Runbook
 
 Operational reference for deploying, observing, and troubleshooting the relayer.
 Audience: whoever is on call.

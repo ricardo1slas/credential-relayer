@@ -346,6 +346,8 @@ This follows the [Go project layout](https://github.com/golang-standards/project
 go mod init github.com/ricardo1slas/private_relayer
 ```
 
+> **Update (2026-09-27).** The module is now `github.com/ricardo1slas/credential-relayer`, matching the public repository name; the commands in this log keep the original path.
+
 **What this does:** Creates `go.mod`, the file that declares this project as a Go module. The module path `github.com/ricardo1slas/private_relayer` is both an identifier and the import path other packages use.
 
 **Why this path?** Convention is `github.com/<user>/<repo>`. It matches where the code will be hosted, so `go get` can resolve it.

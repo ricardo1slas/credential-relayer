@@ -29,7 +29,7 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile
-    image: private-relayer:local
+    image: credential-relayer:local
     container_name: relayer
     restart: unless-stopped
     depends_on:

@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/ricardo1slas/private_relayer/internal/queue"
+	"github.com/ricardo1slas/credential-relayer/internal/queue"
 )
 
 func healthHandler() http.HandlerFunc {

@@ -6,8 +6,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/ricardo1slas/private_relayer/internal/auth"
-	"github.com/ricardo1slas/private_relayer/internal/queue"
+	"github.com/ricardo1slas/credential-relayer/internal/auth"
+	"github.com/ricardo1slas/credential-relayer/internal/queue"
 )
 
 func jobStatusHandler(q *queue.Queue) http.HandlerFunc {

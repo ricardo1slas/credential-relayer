@@ -68,10 +68,10 @@ jobs:
           context: .
           file: infra/docker/Dockerfile
           load: true
-          tags: private-relayer:ci
+          tags: credential-relayer:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: smoke test image
         run: |
-          docker run --rm --entrypoint /app/relayer private-relayer:ci --help 2>&1 || true
-          docker image inspect private-relayer:ci --format '{{.Config.User}} {{.Config.ExposedPorts}}'
+          docker run --rm --entrypoint /app/relayer credential-relayer:ci --help 2>&1 || true
+          docker image inspect credential-relayer:ci --format '{{.Config.User}} {{.Config.ExposedPorts}}'

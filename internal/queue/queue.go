@@ -3,7 +3,7 @@ package queue
 import (
 	"context"
 	"fmt"
-	"github.com/ricardo1slas/private_relayer/internal/auth"
+	"github.com/ricardo1slas/credential-relayer/internal/auth"
 	"time"
 
 	"github.com/google/uuid"

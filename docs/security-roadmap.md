@@ -1,4 +1,4 @@
-# Private Relayer -- Security & Privacy Roadmap
+# Credential Relayer -- Security & Privacy Roadmap
 
 > Living document. Owns the threat model, the tooling we use to catch issues, the backlog of findings, and the phased plan to fix and prevent them. Updated as we scan, audit, and ship.
 
@@ -37,6 +37,8 @@ Last baseline: 2026-04-18. 2026-09-25: govulncheck CI failed on Go 1.26.2 stdlib
 ## 0. Framing: What Does "Private" Mean Here?
 
 The repo name is `private_relayer` but "private" is ambiguous and shapes everything downstream. Two distinct interpretations:
+
+> **Update (2026-09-27).** Resolved by renaming: the public project is `credential-relayer` ("private" meant privately hosted, never anonymity). The development repository keeps its old name.
 
 | Interpretation | Goal | Who is the adversary | What we protect |
 |---|---|---|---|

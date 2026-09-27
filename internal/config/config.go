@@ -161,7 +161,7 @@ func setDefaults(cfg *Config) {
 		cfg.Relay.MaxResponseBytes = 10 << 20 // 10 MiB
 	}
 	if cfg.Relay.UserAgent == "" {
-		cfg.Relay.UserAgent = "private-relayer/0.1"
+		cfg.Relay.UserAgent = "credential-relayer/0.1"
 	}
 	if cfg.Relay.MaxRedirects == 0 {
 		cfg.Relay.MaxRedirects = 3

@@ -6,7 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/ricardo1slas/private_relayer/internal/metrics"
+	"github.com/ricardo1slas/credential-relayer/internal/metrics"
 	"github.com/rs/zerolog"
 )
 
