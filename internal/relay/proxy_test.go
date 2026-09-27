@@ -122,6 +122,7 @@ func TestProxyHeadersSecretsAndRedaction(t *testing.T) {
 
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/p/v1/messages?beta=true", strings.NewReader(`{}`))
 	req.Header.Set("X-API-Key", "relayer-key-must-not-leak")
+	req.Header.Set("X-Goog-Api-Key", "relayer-key-google-style")
 	req.Header.Set("Authorization", "Bearer client-value")
 	req.Header.Set("Anthropic-Version", "2023-06-01")
 	req.Header.Set("Cookie", "c=1")
@@ -135,8 +136,8 @@ func TestProxyHeadersSecretsAndRedaction(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 
 	// Upstream side.
-	if got.Get("X-Api-Key") != "" {
-		t.Error("caller's relayer key forwarded upstream")
+	if got.Get("X-Api-Key") != "" || got.Get("X-Goog-Api-Key") != "" {
+		t.Errorf("caller's relayer key forwarded upstream: %q %q", got.Get("X-Api-Key"), got.Get("X-Goog-Api-Key"))
 	}
 	if got.Get("Authorization") != testSecret {
 		t.Errorf("upstream Authorization %q, want the injected secret", got.Get("Authorization"))

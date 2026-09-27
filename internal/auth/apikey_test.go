@@ -36,6 +36,35 @@ func TestAPIKeyAuth_ValidKey(t *testing.T) {
 	}
 }
 
+// Google SDKs send the key as x-goog-api-key; X-API-Key wins when both are present.
+func TestAPIKeyAuth_GoogHeader(t *testing.T) {
+	a := NewAPIKeyAuth([]KeyConfig{{Name: "goog", Key: "g-key"}, {Name: "std", Key: "s-key"}})
+	var name string
+	h := a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { name = KeyName(r.Context()) }))
+
+	cases := []struct {
+		headers  map[string]string
+		wantCode int
+		wantName string
+	}{
+		{map[string]string{"x-goog-api-key": "g-key"}, http.StatusOK, "goog"},
+		{map[string]string{"X-API-Key": "s-key", "X-Goog-Api-Key": "g-key"}, http.StatusOK, "std"},
+		{map[string]string{"X-Goog-Api-Key": "wrong"}, http.StatusUnauthorized, ""},
+	}
+	for _, c := range cases {
+		name = ""
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		for k, v := range c.headers {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != c.wantCode || name != c.wantName {
+			t.Errorf("%v: got %d/%q, want %d/%q", c.headers, rec.Code, name, c.wantCode, c.wantName)
+		}
+	}
+}
+
 func TestAPIKeyAuth_MissingKey(t *testing.T) {
 	auth := NewAPIKeyAuth([]KeyConfig{
 		{Name: "test-client", Key: "secret-123"},

@@ -56,7 +56,7 @@ the findings fixed and regression-tested. Highlights:
 |---|---|
 | SSRF | Target chosen by name, never by URL; client path resolved against the base URL and checked (fuzzed); dial-time resolution blocks private/loopback addresses; redirects capped and re-validated; HTTPS-only targets by default |
 | Upstream secrets | Loaded from env at startup, never from YAML or client input; injected last so clients can't override them (including `_`-folded spellings); dropped on cross-host or scheme-changing redirects; redacted if the upstream echoes them; never written to Redis |
-| Streaming proxy | Same gate as `/relay`; the caller's `x-api-key` is never forwarded; `Accept-Encoding` stripped so redaction sees plaintext; secrets redacted across chunk boundaries (held back only while a tail could still become a secret; dropped if the stream is truncated); upstream `Set-Cookie` not passed back; the server write deadline is lifted only for the proxied response |
+| Streaming proxy | Same gate as `/relay`; the caller's relayer key (`x-api-key` / `x-goog-api-key`) is never forwarded; `Accept-Encoding` stripped so redaction sees plaintext; secrets redacted across chunk boundaries (held back only while a tail could still become a secret; dropped if the stream is truncated); upstream `Set-Cookie` not passed back; the server write deadline is lifted only for the proxied response |
 | Request policy | Per-target method, path-prefix and body-size rules; paths judged after `../` resolution; encoded `%2e`/`%2f`/`%5c`, `\` and `;` refused so an upstream can't normalize its way out of the prefix (fuzzed) |
 | Request smuggling | Header allow/deny-list that also folds `_` to `-` (a bypass found by fuzzing); hop-by-hop and auth headers never forwarded |
 | AuthN / AuthZ | Hashed keys, constant-time compare, expired and unknown keys indistinguishable; per-key target scopes fail closed; 404 (not 403) on other keys' jobs |
@@ -172,8 +172,18 @@ export ANTHROPIC_BASE_URL=http://<relayer-host>:8080/api/v1/proxy/anthropic
 export ANTHROPIC_API_KEY=<relayer key from make new-key>   # scoped to targets: ["anthropic"]
 ```
 
+Google SDKs work the same way. Gemini CLI sends `GEMINI_API_KEY` as `x-goog-api-key`, which the relayer
+also accepts, but it requires HTTPS unless the base URL is `localhost`, so tunnel over Tailscale SSH:
+
+```bash
+ssh -N -L 8081:<pi tailnet ip>:8080 <user>@<pi> &
+export GOOGLE_GEMINI_BASE_URL=http://localhost:8081/api/v1/proxy/gemini
+export GEMINI_API_KEY=<relayer key scoped to targets: ["gemini"]>
+npx @google/gemini-cli
+```
+
 The proxy applies the same key scope, target policy and secret injection as `/relay`, streams the
-response as it arrives, and never forwards the caller's relayer key upstream. Secrets echoed in the
+response as it arrives, and never forwards the caller's relayer key (`x-api-key` or `x-goog-api-key`) upstream. Secrets echoed in the
 stream are redacted even when split across chunks. There are no retries (a stream can't be replayed),
 and the target's `timeout` bounds the whole stream, so give LLM targets a long one (e.g. `timeout: 600s`).
 

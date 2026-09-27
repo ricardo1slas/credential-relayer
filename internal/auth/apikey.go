@@ -14,7 +14,10 @@ import (
 )
 
 // #nosec G101 -- this is the header *name*, not a credential value.
-const headerAPIKey = "X-API-Key"
+const (
+	headerAPIKey     = "X-API-Key"
+	headerGoogAPIKey = "X-Goog-Api-Key"
+)
 
 // KeyConfig describes one API key. Set exactly one of Key (plaintext, dev only) or
 // KeySHA256 (hex SHA-256 of the key; the config then holds no usable secret).
@@ -104,6 +107,11 @@ func (a *APIKeyAuth) WithLogger(l zerolog.Logger) *APIKeyAuth {
 func (a *APIKeyAuth) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get(headerAPIKey)
+		if key == "" {
+			// Google SDKs (Gemini CLI via GOOGLE_GEMINI_BASE_URL) send their key here; the proxy
+			// never forwards it upstream (relay.proxyDropRequest).
+			key = r.Header.Get(headerGoogAPIKey)
+		}
 		if key == "" {
 			writeError(w, http.StatusUnauthorized, "missing API key")
 			return

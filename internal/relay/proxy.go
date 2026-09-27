@@ -15,9 +15,11 @@ const proxyWriteGrace = 5 * time.Second
 
 // proxyDropRequest are client headers the proxy never forwards, on top of the /relay deny-list.
 var proxyDropRequest = map[string]struct{}{
-	// The caller's relayer key. SDKs send it as x-api-key (ANTHROPIC_API_KEY=<relayer key>); it
-	// must never reach a third party. Upstream credentials come from secret_headers.
-	"x-api-key": {},
+	// The caller's relayer key, in either header auth accepts: x-api-key (Anthropic SDK,
+	// ANTHROPIC_API_KEY=<relayer key>) or x-goog-api-key (Google SDKs, GEMINI_API_KEY=<relayer
+	// key>). It must never reach a third party. Upstream credentials come from secret_headers.
+	"x-api-key":      {},
+	"x-goog-api-key": {},
 	// Let the transport negotiate gzip and decompress, so redaction sees plaintext.
 	"accept-encoding": {},
 }
