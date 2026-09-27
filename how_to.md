@@ -4,7 +4,7 @@
 
 ---
 
-> **Note:** this is the original phase-by-phase build log. The live deployment later moved from AWS to a Raspberry Pi over Tailscale (see `docs/pi-deploy.md` and `docs/hardening.md`); the AWS sections are kept as the reference path.
+> **Note:** this is the phase-by-phase build log, kept as written: earlier sections describe the project as it was at the time, with dated **Update** notes where later work changed the facts. For the current state, start with the [README](README.md). The live deployment moved from AWS to a Raspberry Pi over Tailscale (§15); the AWS sections are kept as the reference path. Phase 12 (§16) is where the project became a credential broker.
 
 ---
 
@@ -24,7 +24,9 @@
 12. [Phase 8: Continuous Deployment](#12-phase-8-continuous-deployment) ✅
 13. [Phase 9: Observability & Alerting](#13-phase-9-observability--alerting) ✅
 14. [Phase 10: Hardening & Documentation](#14-phase-10-hardening--documentation) ✅
-15. [Glossary](#15-glossary)
+15. [Phase 11: Raspberry Pi & Zero-Trust Deployment](#15-phase-11-raspberry-pi--zero-trust-deployment) ✅
+16. [Phase 12: Credential Broker: Secrets, Policy, Streaming](#16-phase-12-credential-broker-secrets-policy-streaming) ✅
+17. [Glossary](#17-glossary)
 
 ---
 
@@ -1491,7 +1493,7 @@ $ curl localhost:8080/api/v1/jobs/a6fb3d77-... -H "X-API-Key: ..."
 
 ---
 
-## 8. Phase 5: Docker & Docker Compose 🚧
+## 8. Phase 5: Docker & Docker Compose ✅
 
 **Goal:** Containerize the relayer so the entire stack (app + Redis) comes up with a single command -- both for local development and as the basis for the ECS deployment in Phase 7.
 
@@ -1765,6 +1767,8 @@ relayer
 `how_to.md` curl examples changed from `-H "X-API-Key: <revoked dev key>"` to `-H "X-API-Key: $API_KEY"` so reviewers copy-paste a placeholder, not a real-looking secret. `configs/config.example.yaml` retains `replace-me-with-a-random-secret` to signal "this is a placeholder."
 
 **What's still flagged.** Gitleaks still finds 2 matches because the old commit `6943cd8` contains the key in `how_to.md` history. Rewriting history (via `git filter-repo --replace-text`) is a Phase 10 task tied to publishing the public showcase repo -- doing it now would force-push private history, which is acceptable but premature. The working tree is clean, so regressions from this point forward are preventable by CI.
+
+> **Update (2026-09-26).** The history was never rewritten. When CI switched gitleaks to full-history scanning, it flagged this commit, and the value turned out to be the *live* `dev-client` key, still accepted by the relayer. It was rotated to a hashed key (the old value now gets 401), redacted from the docs, and its two historic findings are ignored by fingerprint in `.gitleaksignore` so any new leak still fails CI. Lesson: "the working tree is clean" is not the same as "the secret is dead"; rotate first, clean up history second. See §14.
 
 **Why this isn't "security theatre".** The dev key itself was low-value, but treating it as a real secret during cleanup builds the muscle: never commit a credential-shaped value, even as a placeholder, even in a private repo. The next secret you commit *will* be the real one if the habit isn't there.
 
@@ -2051,7 +2055,7 @@ ReadonlyRootfs = true
 | Item | Where it lives | Why deferred |
 |---|---|---|
 | **T6 proxy-header trust** (partial) | `middleware.RealIP` unconditionally trusts `X-Forwarded-For` from the direct peer | Behind an ALB this is correct. On a direct-internet deployment it's a rate-limit bypass. Fix (trusted-proxy CIDR allowlist) lands in Phase 7 when we know the real ALB CIDR. |
-| **T12b history purge** | `gitleaks` still flags the dev key in commit `6943cd8` | Rewriting history now means force-pushing private history and invalidating anyone's clone. Cleaner to do once, in Phase 10, when we fork the public showcase repo via `git filter-repo`. |
+| **T12b history purge** (*update 2026-09-26: key rotated, see the update note above and §14*) | `gitleaks` still flags the dev key in commit `6943cd8` | Rewriting history now means force-pushing private history and invalidating anyone's clone. Cleaner to do once, in Phase 10, when we fork the public showcase repo via `git filter-repo`. |
 | **T13 error-message leakage** (generic client-facing errors) | Client-facing 4xx/5xx messages still include raw Go error strings | Low priority. Go stdlib errors are generally safe; real leakage risk is filesystem paths, which this code doesn't expose. Will tighten in Phase 10 with a generic "bad request" + request-ID trailer. |
 | **T14 continuous drift** | Nothing today nightly-scans deps and the alpine base image | This is literally Phase 6's purpose -- CI with nightly scanner runs + Dependabot. |
 | **Secrets Manager integration** | API keys still loaded from YAML (or env var override) | Phase 7 -- the ECS task definition injects Secrets Manager values via the `secrets:` array. Premature to implement before we have AWS. |
@@ -2227,6 +2231,8 @@ Unlike `gosec` (pattern match) or `trivy` (package version match), `govulncheck`
 ```
 The `--no-git` flag is the key choice. By default gitleaks scans git history, which would surface the pre-Phase-5.5 dev key in commit `6943cd8` (tracked as T12b in `docs/security-roadmap.md`, slated for `git filter-repo` cleanup in Phase 10). `--no-git` limits the scan to what's currently committed in the working tree -- so CI gates *future* secrets without forcing a history-rewrite decision today. If someone adds a new credential in a PR, CI catches it. If someone tries to revive the old one, CI catches it. Both gates, without the cost.
 
+> **Update (2026-09-26).** `security.yml` now scans the full history (`fetch-depth: 0`, no `--no-git`), with revoked secrets ignored by fingerprint in `.gitleaksignore`. The first history scan is what found the live key described in §9.
+
 **`trivy-image`** -- CVE scan of the built container:
 ```yaml
 - uses: aquasecurity/trivy-action@0.28.0
@@ -2398,7 +2404,7 @@ All commands pass. First PR after the initial push is where the remote CI runs f
 
 ---
 
-## 11. Phase 7: AWS Infrastructure with Terraform 🚧
+## 11. Phase 7: AWS Infrastructure with Terraform ✅
 
 **Goal:** Define all cloud infrastructure as code.
 
@@ -2453,7 +2459,7 @@ make tf-plan-dev   # requires terraform.tfvars + initialized backend
 
 ---
 
-## 12. Phase 8: Continuous Deployment 🚧
+## 12. Phase 8: Continuous Deployment ✅
 
 **Goal:** Automate deployments from GitHub to ECS.
 
@@ -2555,11 +2561,9 @@ After step 3, every push to `main` triggers `deploy-dev`.
 
 ---
 
-## 13. Phase 9: Observability & Alerting ⬜
+## 13. Phase 9: Observability & Alerting ✅
 
-**Goal:** Know when things break before users tell you.
-
-**Status:** NOT STARTED
+**Goal:** Know when things break before users tell you, and be able to answer "who used what".
 
 ### The Three Pillars of Observability
 
@@ -2580,17 +2584,142 @@ After step 3, every push to `main` triggers `deploy-dev`.
 - **Metrics**: "How much?" -- aggregated counters, histograms, gauges
 - **Traces**: "What path did this request take?" -- future enhancement
 
+### What was built
+
+- **Metrics on their own port.** The relayer serves `/metrics` on `:9090`, never on the API port, so scraping needs no API key and the metrics aren't exposed to API clients. The collectors live on a private `prometheus.Registry` (no global singletons), which also makes them safe to create fresh in every test.
+- **Prometheus + Alertmanager + Grafana** in Compose, all provisioned from files: scrape config, alert rules, datasource and dashboards. Alertmanager emails through SMTP with an app password read from the host's `.env`, templated in at container start so the secret never lands in a committed file.
+- **Alert rules** for the failure modes that matter: relayer down, 5xx rate, p95 latency, failing upstreams, queue backlog, dead-lettered jobs, and spikes of auth failures and rate-limit hits (the last two are the "someone is probing" signal).
+
+### Growing it into four dashboards (2026-09-26)
+
+Once the relayer brokered real credentials, "requests per second" stopped being the interesting question. New metrics:
+
+| Metric | Answers |
+|---|---|
+| `relayer_rejections_total{target,key,reason}` | What did the gate stop, for whom, and why? |
+| `relayer_upstream_responses_total{target,key,code}` | Which key used which upstream, and how did it go? |
+| `relayer_stream_ttfb_seconds{target}` | How long until the first token? (the LLM latency people feel) |
+| `relayer_stream_duration_seconds`, `relayer_stream_bytes_total` | How long and how big are streams? |
+
+Dashboards: **Security & usage**, **LLM & upstreams**, **Pi host** (node_exporter) and an SLO row on the main one. Chart choices followed a data-visualization method rather than taste: time to first byte is a **heatmap** of the histogram (a p95 line hides a second population, a heatmap shows it); refusals per reason are single-hue sorted bars (the job is comparing magnitudes); headline numbers are stat tiles, not one-bar charts; and the palette was run through a colorblind-safety validator. The four-way status palette *failed* it (4xx yellow next to 429 orange was too close), so 429s moved to their own panel.
+
+### SLO and burn-rate alerting
+
+- **SLI:** share of API requests not failed *by the relayer*: 5xx except 502, because a 502 means the upstream failed, and upstream health is tracked separately. Health probes excluded.
+- **Target:** 99.5% over 30 days, so the error budget is 0.5% of requests.
+- **Alert:** the multi-window burn-rate rule from the Google SRE workbook: fire when both the 1-hour and 5-minute error ratios exceed 14.4x the budget rate (2% of a month's budget in an hour); the short window makes it clear quickly after a fix.
+- Prometheus retention went from 7 to 35 days, since a 30-day SLO needs a full window, with a 1 GB size cap for the SD card.
+
+### Bugs this phase found
+
+- **Label cardinality from clients.** Rejections are labelled by target, but a client can send any target name. Recording it verbatim would let anyone create unbounded series. Names the registry doesn't know are recorded as `unknown`.
+- **False latency alerts.** `HighLatencyP95` measured every route; a streamed LLM answer legitimately takes seconds, so the proxy route is excluded (streams have their own histograms).
+- **Counters that start above zero read as zero.** Three real 413s showed as `0` on the security dashboard: the series was *created* by those events, and `increase()` can't see a series' first increments. Prometheus 3's `created-timestamp-zero-ingestion` records each counter's start at zero; the same three events then read 3. Rare events are exactly the ones a security dashboard exists for, so this mattered.
+- **A wrong metric name** (`node_cpu_scale_frequency_hertz` instead of `..._scaling_...`). Caught by running every panel's query against live Prometheus before committing, which is now the habit for dashboard changes.
+
 ---
 
-## 14. Phase 10: Hardening & Documentation ⬜
+## 14. Phase 10: Hardening & Documentation ✅
 
-**Goal:** Production-ready polish.
+**Goal:** Close the backlog from the threat model, prove the fixes, and make the repo fit to publish.
 
-**Status:** NOT STARTED
+### Authentication and authorization
+
+- **Hashed API keys** (`key_sha256`, generated by `make new-key`), optional `expires_at`, and several entries with one name so a key can be rotated without downtime. Expired and unknown keys return the same 401: no oracle for "this key used to work".
+- **Per-key target scopes** that fail closed, and **job ownership**: a key can only read jobs it enqueued, and gets 404 (not 403) for anyone else's, so it can't even learn they exist.
+
+### Fuzzing found a real bypass
+
+`FuzzBuildTargetURL` held (2.7M executions). `FuzzHeaderFilter` did not: a header named `X_Real_IP` passed the deny-list, but CGI/WSGI-style backends read it as `X-Real-IP`. The filter now folds `_` to `-` before checking. The fuzz target models the backend's folding independently, so the test isn't just the implementation checking itself.
+
+### Performance: a 3.7x fix from a profile
+
+Under 200 concurrent requests the Pi managed 282 req/s. `pprof` showed ~80% of CPU in dialing new TCP connections: the per-request timeout context was cancelled as soon as the handler returned, before the caller had read the response body, so `net/http` couldn't return the connection to the pool. Cancelling on `Body.Close()` instead (a small `cancelOnClose` wrapper) took it to **1048 req/s** and p95 from 1.95 s to 0.41 s. A regression test pins it.
+
+### Deploys gated on CI
+
+The deploy used to run on every push, in parallel with tests, so a failing commit still reached the Pi. It now triggers on a *successful* `ci` run (`workflow_run`), checks out exactly the commit that was tested, and skips if `main` has already moved on, so an older run finishing last can't roll the Pi back. One trap: `workflow_run`'s branch filter also matches a **fork's** branch named `main`, and this job holds tailnet credentials, so it additionally requires `event == 'push'` from this repository.
+
+### The leaked key, for real
+
+See the update in §9: the first full-history secret scan found that the "old" dev key in an early commit was still the live key. Rotated, redacted, fingerprint-ignored. During the rotation the relayer went down for two minutes because the rewritten `config.yaml` was left mode `600`, rsync preserved it, and the non-root container couldn't read its own config. Now noted in the deploy docs: config stays `644`.
+
+### Preparing to publish
+
+Machine-specific values (the Pi's tailnet IP and SSH user) moved out of tracked files into a gitignored `local.mk` and, for CI, repository variables. The deploy job runs only where those variables exist, so a fork or public mirror never touches a tailnet.
 
 ---
 
-## 15. Glossary
+## 15. Phase 11: Raspberry Pi & Zero-Trust Deployment ✅
+
+**Goal:** Keep a live deployment after the AWS credits ran out, without exposing anything to the internet.
+
+**Why a Pi.** It is free to run, always on, and a more honest constraint than a cloud VM: 4 cores, an SD card, and a CPU that throttles at 80 °C. Performance work (§14) and the Pi host dashboard (§13) both came from taking that seriously.
+
+**How it is reached.** Only over **Tailscale**. Every Compose port binds to the Pi's tailnet address (`BIND_IP=$(tailscale ip -4)`), never `0.0.0.0`; the tailnet policy is deny-by-default with tags (`tag:pi`, `tag:ci`) and policy tests, and SSH is Tailscale SSH (identity-based, no keys to manage). Details: `docs/hardening.md`, `docs/pi-deploy.md`.
+
+**How it is deployed.** `make deploy-pi` rsyncs the repo (gitignored files excluded, host-only files such as `configs/config.yaml` and `.env.relayer` protected from `--delete`) and runs `docker compose up -d --build`. CI does the same from an ephemeral, tagged tailnet node (§14).
+
+**Things the Pi taught:**
+- `/tmp` is mounted `noexec`: good hardening, and the reason a diagnostic binary had to run from the home directory.
+- The containers had no IPv6 route while DNS returned IPv6 addresses first. It turned out not to matter (Go ordered IPv4 first), but it was worth proving with a probe rather than assuming.
+- Host metrics come from node_exporter with `pid: host` and a read-only view of `/`, no published port. Network-interface stats would need host networking, which would put `:9100` on the tailnet, so they were left out on purpose.
+
+---
+
+## 16. Phase 12: Credential Broker: Secrets, Policy, Streaming ✅
+
+**Goal:** Clients should never hold upstream secrets. This phase is where the project stopped being "an HTTP relay" and became what the README now leads with.
+
+### Secret injection
+
+A target maps header names to the **names of environment variables**:
+
+```yaml
+secret_headers:
+  X-Goog-Api-Key: GEMINI_API_KEY
+```
+
+- Values are read once at startup; a missing or empty variable **stops startup**, never a silent unauthenticated request. Error messages name the variable, never the value.
+- Injected **after** client headers, and any client header that folds to the same name (`x_goog_api_key`) is dropped, so a client can neither override the secret nor send a second copy.
+- **Redirects:** Go's client strips only `Authorization` and `Cookie` on a cross-host redirect; a custom header like `X-Api-Key` would follow a redirect anywhere. The relayer strips its secrets on any host or scheme change. The test was verified by removing the fix and watching the secret arrive at the other host.
+- **Echoes:** httpbin's `/headers` returns the request headers, secret included. Injected values are redacted from responses.
+- Secrets are injected at send time, so they never reach Redis with queued jobs.
+
+The secret lives in `infra/docker/.env.relayer`, given only to the relayer container (not to Grafana or Alertmanager). Getting a key onto the Pi safely turned out to be the hardest part: one attempt pasted the key into the command line instead of the hidden prompt, which puts it in shell history. The fix was procedural: revoke that key, and use an editor or a length-checked `read -s`.
+
+### Per-target policy and one gate
+
+```yaml
+allow_methods: ["POST"]
+allow_paths: ["/v1/messages"]
+max_body_bytes: 262144
+```
+
+Without this, any key allowed to use a target could call *every* endpoint of the upstream with your credential. `Handler.Authorize` is the single gate for `/relay`, `/webhook` (before enqueue, so a bad job gets a 4xx instead of dead-lettering later), `/proxy` and the worker (so a job queued before a policy change can't bypass it). Order: key scope, method, target, path, policy.
+
+Paths are matched after `../` resolution, on segment boundaries (`/v1/messages` doesn't allow `/v1/messagesX`). When a path policy is set, encoded dots/slashes/backslashes, raw backslashes and `;` are refused: an upstream might decode `%2e%2e` or treat `..;/` as traversal after the relayer approved the path. `FuzzPathPolicy` models such an upstream (decode, fold backslashes, clean) and asserts every accepted path still lands inside the prefix: 4.4M inputs, no bypass.
+
+### Streaming proxy for SDKs and agents
+
+`/api/v1/proxy/{target}/...` forwards the raw request and streams the response back as it arrives, flushing after every chunk, so an SDK or agent only needs its base URL changed.
+
+- **Authentication by coincidence, then by design.** The Anthropic SDK sends `ANTHROPIC_API_KEY` as `x-api-key`, which is already the relayer's header, so a relayer key works as-is. Google SDKs send `x-goog-api-key`; auth now accepts that too. Either way, the caller's relayer key is **never forwarded** upstream (tested by removing the drop rule).
+- **Redaction across chunks.** A secret can be split between two stream chunks. `streamRedactor` holds back only the longest tail that could still become a secret, so ordinary SSE events flush immediately; a test checks every three-way split of a stream. `Accept-Encoding` is stripped so the transport decompresses and redaction sees plaintext. A truncated stream drops the held tail rather than leak half a secret. (On `/relay` this can't happen: a body cut mid-string is invalid JSON and never encoded, which corrected an earlier over-cautious note.)
+- **Timeouts.** The server's 10 s write timeout would cut every long answer, so the proxy lifts it for that response only (target timeout plus a grace period, so a 502 can still be written). `/relay` later got the same treatment, sized to its worst case: every attempt timing out plus backoff.
+- **No retries.** A stream can't be replayed and LLM POSTs aren't idempotent.
+
+### Trying it for real: Gemini free tier and Gemini CLI
+
+Chosen because it costs nothing. What happened, in order:
+
+1. Every request returned an **empty 404**. The relayer, the key and DNS were ruled out one by one (a probe binary in the relayer's own image and network; the same relayer code working locally). Two causes overlapped: the model name picked from memory had been retired for new users, and the brand-new key was still propagating.
+2. **Gemini CLI** requires HTTPS unless the base URL is `localhost`, so it runs through an SSH port-forward over Tailscale. It worked first time once the relayer accepted `x-goog-api-key`.
+3. Asked to do an agentic task, the CLI started getting **413s**: agents resend the whole conversation (file contents, tool output) every turn, and the 64 KB body limit was sized for chat. The policy worked exactly as intended; the limit was wrong. And the security dashboard showed those refusals as 0, which led to the Prometheus fix in §13.
+
+---
+
+## 17. Glossary
 
 | Term | Definition |
 |---|---|
@@ -2613,3 +2742,11 @@ After step 3, every push to `main` triggers `deploy-dev`.
 | **OIDC federation** | A way for GitHub Actions to assume an AWS IAM role without storing credentials |
 | **SSRF** | Server-Side Request Forgery -- when an attacker tricks a server into making requests to internal resources |
 | **Slowloris** | An attack where a client holds connections open by sending data very slowly, exhausting server resources |
+| **Credential broker** | A service that holds secrets and uses them on a client's behalf, so the client only holds a revocable, scoped credential for the broker |
+| **SSE (Server-Sent Events)** | A long-lived HTTP response that streams `data:` events; how LLM APIs stream tokens |
+| **TTFB (time to first byte)** | Time from sending a request to receiving the first byte of the response; for LLMs, time to first token |
+| **SLO / SLI** | Service level objective (the target, e.g. 99.5% over 30 days) measured by a service level indicator (the ratio actually computed) |
+| **Error budget** | The failures an SLO allows (0.5% of requests at 99.5%); spending it faster than planned is a signal to slow down |
+| **Burn rate** | How fast the error budget is being spent relative to plan; 1x exhausts it exactly at the end of the window |
+| **Label cardinality** | The number of distinct label values in a metric; unbounded values (from client input) can overwhelm Prometheus |
+| **Fuzzing** | Feeding generated inputs to code while checking a property that must always hold, to find inputs no one thought to test |
