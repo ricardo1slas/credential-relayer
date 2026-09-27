@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Benchmark the relayer on the Pi. Load is generated from this machine over Tailscale.
-# Usage: benchmarks/run.sh   (env: PI=<user>@<pi-host> DUR=20s)
+# Usage: PI=<user>@<pi-host> benchmarks/run.sh   (or `make bench` with PI in local.mk; env: DUR=20s)
 # Needs: hey (brew install hey), ssh access to the Pi, Docker on the Pi.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PI=${PI:-<user>@<pi-host>}; HOST=${PI#*@}; DUR=${DUR:-20s}
+PI=${PI:?set PI=<user>@<pi-host>}; HOST=${PI#*@}; DUR=${DUR:-20s}
 KEY=bench-key-not-a-secret
 OUT=benchmarks/results/$(date +%Y-%m-%d_%H%M)_$(git rev-parse --short HEAD).txt
 BODY='{"target":"mock","method":"GET","path":"/"}'

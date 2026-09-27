@@ -2,6 +2,10 @@
 	docker-build docker-up docker-down docker-logs docker-ps tunnel \
 	tf-fmt tf-validate tf-plan-dev tf-apply-dev tf-destroy-dev tf-plan-prod tf-apply-prod
 
+# Machine-specific settings (PI, RELAYER_URL, RELAYER_API_KEY_FILE) live in the gitignored
+# local.mk; see local.mk.example.
+-include local.mk
+
 APP_NAME := relayer
 BUILD_DIR := bin
 COMPOSE := docker compose -f infra/docker/docker-compose.yml
@@ -65,8 +69,8 @@ tunnel:
 
 # Deploy to the Raspberry Pi over Tailscale (rsync + compose build on the Pi).
 # Ports bind to the Pi's tailnet IP only. Set GRAFANA_PASSWORD in the Pi's ~/relayer/infra/docker/.env.
-PI ?= <user>@<pi-host>
 sync-pi:
+	@test -n "$(PI)" || { echo "set PI=<user>@<pi-host> (e.g. in local.mk)"; exit 1; }
 	rsync -az --delete --exclude .git --exclude bin --exclude infra/terraform --exclude private \
 		--filter='P configs/config.yaml' --filter='P infra/docker/.env' --filter='P infra/docker/.env.relayer' --include configs/config.yaml --filter=':- .gitignore' ./ $(PI):relayer/
 
@@ -79,14 +83,14 @@ new-key:
 	@k=$$(openssl rand -hex 32); echo "API key (give to the client, do not store it): $$k"; \
 	echo "config:  key_sha256: \"$$(printf %s $$k | shasum -a 256 | cut -d' ' -f1)\""
 
-# Mixed synthetic traffic against the Pi so the Grafana dashboard moves (Ctrl-C to stop).
-# make traffic ARGS=--burst
+# Mixed synthetic traffic so the Grafana dashboards move (Ctrl-C to stop). make traffic ARGS=--burst
+# Uses RELAYER_URL and RELAYER_API_KEY(_FILE) from the environment or local.mk.
 traffic:
 	./scripts/traffic.sh $(ARGS)
 
 # Isolated throwaway stack on the Pi; results land in benchmarks/results/.
 bench:
-	./benchmarks/run.sh
+	PI=$(PI) ./benchmarks/run.sh
 
 tf-fmt:
 	terraform -chdir=$(TF_DIR) fmt -recursive

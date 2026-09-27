@@ -6,8 +6,8 @@ name: deploy-pi
 # The runner joins the tailnet as tag:ci (ephemeral) and runs `make deploy-pi`
 # (rsync + docker compose up --build on the Pi). Auth is Tailscale SSH: the
 # policy must grant tag:ci -> tag:pi (tcp:22, tcp:8080) and an ssh accept rule.
-# See docs/hardening.md for the exact policy. PI_HOST defaults to the Pi's tailnet IP
-# (no MagicDNS dependency on the runner).
+# See docs/hardening.md for the exact policy. Repository variables: PI_HOST (the Pi's tailnet
+# IP; no MagicDNS dependency on the runner) and PI_USER.
 on:
   workflow_run:
     workflows: [ci]
@@ -27,8 +27,10 @@ jobs:
     runs-on: ubuntu-latest
     # workflow_run's branch filter matches a fork PR's branch named "main" too, and this job
     # holds the tailnet secrets: only deploy a successful ci run from a push to this repo.
+    # Runs only where the PI_HOST/PI_USER repository variables are set (the maintainer's deploy
+    # repo); a fork or public mirror without them never touches a tailnet.
     if: >-
-      github.repository == 'ricardo1slas/private_relayer' && (
+      vars.PI_HOST != '' && vars.PI_USER != '' && (
         github.event_name == 'workflow_dispatch' || (
           github.event.workflow_run.conclusion == 'success' &&
           github.event.workflow_run.event == 'push' &&
@@ -66,12 +68,12 @@ jobs:
 
       - name: Deploy
         if: steps.fresh.outputs.deploy == 'true'
-        run: make deploy-pi PI=<pi-user>@${{ vars.PI_HOST || '<pi-tailnet-ip>' }}
+        run: make deploy-pi PI=${{ vars.PI_USER }}@${{ vars.PI_HOST }}
 
       - name: Smoke test
         if: steps.fresh.outputs.deploy == 'true'
         run: |
-          host=${{ vars.PI_HOST || '<pi-tailnet-ip>' }}
+          host=${{ vars.PI_HOST }}
           for _ in $(seq 10); do
             curl -fsS -m 5 http://$host:8080/ready && exit 0
             sleep 3

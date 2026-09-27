@@ -17,7 +17,7 @@ manual `make deploy-pi` and is protected from `--delete` afterwards.
 
 ## Manual deploy
 ```bash
-make deploy-pi                 # PI=<user>@<pi-host> by default
+make deploy-pi                 # PI=<user>@<pi-host>, e.g. from local.mk
 make deploy-pi PI=user@host
 ```
 

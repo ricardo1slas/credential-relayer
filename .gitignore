@@ -38,3 +38,6 @@ infra/terraform/**/terraform.tfvars
 
 # Scratch file holding a key (never commit)
 .text.text
+
+# Machine-specific Makefile settings (PI host, relayer URL)
+local.mk
