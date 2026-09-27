@@ -98,6 +98,9 @@ services:
       # 35d: the 30-day SLO panels need a full window. The size cap protects the SD card.
       - "--storage.tsdb.retention.time=35d"
       - "--storage.tsdb.retention.size=1GB"
+      # Count a counter's first increments: without this, increase() misses the events that
+      # create a series (e.g. the first 3 refusals of a new reason read as 0).
+      - "--enable-feature=created-timestamp-zero-ingestion"
     ports:
       - "${BIND_IP:-127.0.0.1}:9091:9090"
     volumes:
