@@ -35,3 +35,6 @@ infra/terraform/**/terraform.tfvars
 
 # Personal notes / AI-assistant context (kept locally, never published)
 /private/
+
+# Scratch file holding a key (never commit)
+.text.text
