@@ -1,5 +1,5 @@
 .PHONY: build run test test-e2e cover lint fmt clean loadtest \
-	docker-build docker-up docker-down docker-logs docker-ps tunnel \
+	docker-build docker-up docker-down docker-logs docker-ps tunnel publish-check publish \
 	tf-fmt tf-validate tf-plan-dev tf-apply-dev tf-destroy-dev tf-plan-prod tf-apply-prod
 
 # Machine-specific settings (PI, RELAYER_URL, RELAYER_API_KEY_FILE) live in the gitignored
@@ -87,6 +87,14 @@ new-key:
 # Uses RELAYER_URL and RELAYER_API_KEY(_FILE) from the environment or local.mk.
 traffic:
 	./scripts/traffic.sh $(ARGS)
+
+# Public mirror: build a scrubbed export of main and verify it (publish-check), then push it
+# (publish). Settings in local.mk: PUBLISH_REPLACEMENTS, PUBLISH_MAILMAP, PUBLIC_REMOTE.
+publish-check:
+	./scripts/publish.sh
+
+publish:
+	./scripts/publish.sh --push
 
 # Isolated throwaway stack on the Pi; results land in benchmarks/results/.
 bench:
