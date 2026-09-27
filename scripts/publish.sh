@@ -23,7 +23,12 @@ args=(--replace-text "$RULES" --replace-message "$RULES" --force --quiet)
 if [ -n "${PUBLISH_MAILMAP:-}" ]; then args+=(--mailmap "$(expand "$PUBLISH_MAILMAP")"); fi
 (cd "$OUT" && git filter-repo "${args[@]}")
 
-# Verify: no scrubbed value survives in any file version, commit message or author line.
+# Verify. What each check can and cannot catch (tested by removing rules):
+#  - the rules check proves every value the rules list is gone; it is the ONLY guard for a known
+#    value that doesn't look like a secret (e.g. the revoked dev key in prose, which gitleaks misses)
+#  - the tailnet-range check catches a device address the rules forgot
+#  - gitleaks catches new real-looking secrets
+# So: when something personal lands in a commit, add a rule for it.
 fail=0
 history=$(cd "$OUT" && git log --all -p --format='%an <%ae>%n%cn <%ce>%n%B')
 n=0
