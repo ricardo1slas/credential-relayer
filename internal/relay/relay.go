@@ -256,25 +256,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Authorize before the registry lookup so an unauthorized key can't tell a target it may not
-	// use from one that doesn't exist.
-	if !auth.TargetAllowed(r.Context(), req.Target) {
-		h.logger.Warn().Str("key", auth.KeyName(r.Context())).Str("target", req.Target).Msg("relay denied: key not permitted for target")
-		writeJSON(w, http.StatusForbidden, RelayResponse{
-			Status:  "error",
-			Target:  req.Target,
-			Error:   "key not permitted for this target",
-			Latency: time.Since(start).String(),
-		})
-		return
-	}
-
 	req.Method = NormalizeMethod(req.Method)
-	target, err := h.Authorize(req.Target, req.Method, req.Path, len(req.Body))
+	target, err := h.Authorize(r.Context(), req.Target, req.Method, req.Path, len(req.Body))
 	if err != nil {
 		var rerr *RequestError
 		if !errors.As(err, &rerr) {
-			rerr = &RequestError{http.StatusInternalServerError, "internal error"}
+			rerr = &RequestError{Status: http.StatusInternalServerError, Msg: "internal error"}
 		}
 		h.logger.Warn().Str("key", auth.KeyName(r.Context())).Str("target", req.Target).Str("method", req.Method).
 			Int("status", rerr.Status).Msg("relay rejected: " + rerr.Msg)
@@ -287,10 +274,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The server's WriteTimeout is sized for quick calls; give this response the target's worst
+	// case (every attempt timing out, plus backoff) so a slow upstream isn't cut off mid-reply.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(target.worstCase() + writeGrace))
+
 	resp, attempts, err := h.relayWithRetries(r.Context(), target, req)
 	if err != nil {
 		h.logger.Error().
 			Err(err).
+			Str("key", auth.KeyName(r.Context())).
 			Str("target", req.Target).
 			Int("attempts", attempts).
 			Msg("relay failed")
@@ -316,6 +308,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body = target.redact(body)
 
 	h.logger.Info().
+		Str("key", auth.KeyName(r.Context())).
 		Str("target", req.Target).
 		Int("status", resp.StatusCode).
 		Int("attempts", attempts).
@@ -337,7 +330,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // Policy is re-checked here: a job queued before a config change must not bypass the new policy.
 func (h *Handler) ExecuteRelay(ctx context.Context, targetName, method, path string, headers map[string]string, body json.RawMessage) (*http.Response, int, error) {
 	method = NormalizeMethod(method)
-	target, err := h.Authorize(targetName, method, path, len(body))
+	target, err := h.Authorize(ctx, targetName, method, path, len(body))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -362,24 +355,41 @@ func NormalizeMethod(m string) string {
 }
 
 // Authorize is the single request gate for /relay, /webhook (at enqueue, so a bad job is
-// refused with a 4xx instead of dead-lettered) and the worker: global method allow-list,
-// target lookup, path validation, then the target's own policy. Errors are *RequestError.
-// Key scopes are checked by the caller first, so an unscoped key can't probe targets.
-func (h *Handler) Authorize(targetName, method, path string, bodyLen int) (Target, error) {
+// refused with a 4xx instead of dead-lettered), /proxy and the worker: the caller's key scope
+// (from ctx), global method allow-list, target lookup, path validation, then the target's own
+// policy. Errors are *RequestError, and every rejection is counted by reason. Scope is checked
+// first so a key can't tell a target it may not use from one that doesn't exist.
+func (h *Handler) Authorize(ctx context.Context, targetName, method, path string, bodyLen int) (Target, error) {
+	target, err := h.authorize(ctx, targetName, method, path, bodyLen)
+	var rerr *RequestError
+	if errors.As(err, &rerr) {
+		label := "unknown" // client-chosen names must never become metric label values
+		if _, gerr := h.registry.Get(targetName); gerr == nil {
+			label = targetName
+		}
+		h.metrics.RecordRejection(label, auth.KeyName(ctx), rerr.Reason)
+	}
+	return target, err
+}
+
+func (h *Handler) authorize(ctx context.Context, targetName, method, path string, bodyLen int) (Target, error) {
+	if !auth.TargetAllowed(ctx, targetName) {
+		return Target{}, &RequestError{Status: http.StatusForbidden, Msg: "key not permitted for this target", Reason: "scope"}
+	}
 	if _, ok := allowedMethods[method]; !ok {
-		return Target{}, &RequestError{http.StatusBadRequest, fmt.Sprintf("method %q not allowed", method)}
+		return Target{}, &RequestError{Status: http.StatusBadRequest, Msg: fmt.Sprintf("method %q not allowed", method), Reason: "bad_method"}
 	}
 	target, err := h.registry.Get(targetName)
 	if err != nil {
-		return Target{}, &RequestError{http.StatusNotFound, err.Error()}
+		return Target{}, &RequestError{Status: http.StatusNotFound, Msg: err.Error(), Reason: "not_found"}
 	}
 	resolved, err := buildTargetURL(target.BaseURL, path)
 	if err != nil {
-		return Target{}, &RequestError{http.StatusBadRequest, "invalid path: " + err.Error()}
+		return Target{}, &RequestError{Status: http.StatusBadRequest, Msg: "invalid path: " + err.Error(), Reason: "bad_path"}
 	}
 	u, err := url.Parse(resolved)
 	if err != nil {
-		return Target{}, &RequestError{http.StatusBadRequest, "invalid path"}
+		return Target{}, &RequestError{Status: http.StatusBadRequest, Msg: "invalid path", Reason: "bad_path"}
 	}
 	if err := target.checkPolicy(method, u.EscapedPath(), bodyLen); err != nil {
 		return Target{}, err
@@ -421,11 +431,11 @@ func (h *Handler) relayWithRetries(ctx context.Context, target Target, req Relay
 			continue
 		}
 
-		h.metrics.RecordRelay(target.Name, resp.StatusCode, attempt+1, false, time.Since(start))
+		h.metrics.RecordRelay(target.Name, auth.KeyName(ctx), resp.StatusCode, attempt+1, false, time.Since(start))
 		return resp, attempt + 1, nil
 	}
 
-	h.metrics.RecordRelay(target.Name, 0, target.Retries+1, true, time.Since(start))
+	h.metrics.RecordRelay(target.Name, auth.KeyName(ctx), 0, target.Retries+1, true, time.Since(start))
 	return nil, target.Retries + 1, fmt.Errorf("all %d attempts failed: %w", target.Retries+1, lastErr)
 }
 

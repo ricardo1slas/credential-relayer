@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/ricardo1slas/private_relayer/internal/auth"
 	"github.com/ricardo1slas/private_relayer/internal/queue"
 	"github.com/ricardo1slas/private_relayer/internal/relay"
 )
@@ -37,15 +36,10 @@ func webhookHandler(q *queue.Queue, rh *relay.Handler, maxBytes int64) http.Hand
 			return
 		}
 
-		if !auth.TargetAllowed(r.Context(), req.Target) {
-			writeError(w, http.StatusForbidden, "key not permitted for this target")
-			return
-		}
-
 		// Same gate as /relay, applied before enqueue: an unknown target, bad path or policy
 		// violation gets a 4xx now instead of a job that can only dead-letter.
 		req.Method = relay.NormalizeMethod(req.Method)
-		if _, err := rh.Authorize(req.Target, req.Method, req.Path, len(req.Body)); err != nil {
+		if _, err := rh.Authorize(r.Context(), req.Target, req.Method, req.Path, len(req.Body)); err != nil {
 			var rerr *relay.RequestError
 			if !errors.As(err, &rerr) {
 				writeError(w, http.StatusInternalServerError, "internal error")

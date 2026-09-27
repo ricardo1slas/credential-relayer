@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/ricardo1slas/private_relayer/internal/auth"
 	"github.com/ricardo1slas/private_relayer/internal/relay"
 	"github.com/rs/zerolog"
 )
@@ -89,7 +90,10 @@ func (wp *WorkerPool) processJob(ctx context.Context, job *Job, logger zerolog.L
 	_ = wp.queue.UpdateJob(ctx, job)
 
 	// Use the relay handler's internal method to execute the relay.
-	resp, _, err := wp.handler.ExecuteRelay(ctx, job.Target, job.Method, job.Path, job.Headers, job.Body)
+	// Attribute the call to the key that queued it (metrics, logs), scoped to this one target:
+	// the key's scope was already checked at enqueue.
+	jobCtx := auth.WithKey(ctx, job.Owner, []string{job.Target})
+	resp, _, err := wp.handler.ExecuteRelay(jobCtx, job.Target, job.Method, job.Path, job.Headers, job.Body)
 	if err != nil {
 		logger.Error().Err(err).Int("attempt", job.Attempts).Msg("job relay failed")
 

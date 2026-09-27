@@ -40,14 +40,14 @@ func FuzzPathPolicy(f *testing.F) {
 	if err != nil {
 		f.Fatal(err)
 	}
-	h := &Handler{registry: registry}
+	h := &Handler{registry: registry, metrics: nopRecorder{}}
 	for _, s := range []string{"/v1/messages", "/v1/messages/x", "/v1/messages/../admin", "/v1/messages/%2e%2e/admin",
 		"/v1/messages/..;/admin", "/v1/messages%2f..%2fadmin", `/v1/messages/..\admin`, "/v1/messages/./../x", "/v1/messages?x=/../a",
 		"/v1/messages/%252e%252e/admin", "/v1/messagesX", "/v1/messages//../x"} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, p string) {
-		if _, err := h.Authorize("t", "POST", p, 0); err != nil {
+		if _, err := h.Authorize(unscopedCtx(), "t", "POST", p, 0); err != nil {
 			return
 		}
 		got, _ := buildTargetURL(registry.targets["t"].BaseURL, p)

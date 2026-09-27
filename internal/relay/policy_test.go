@@ -2,7 +2,6 @@ package relay
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -119,7 +118,7 @@ func TestAuthorize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &Handler{registry: registry}
+	h := &Handler{registry: registry, metrics: nopRecorder{}}
 	cases := []struct {
 		target, method, path string
 		want                 int
@@ -133,7 +132,7 @@ func TestAuthorize(t *testing.T) {
 		{"api", "GET", "/v1/messages", http.StatusForbidden},
 	}
 	for _, c := range cases {
-		_, err := h.Authorize(c.target, c.method, c.path, 0)
+		_, err := h.Authorize(unscopedCtx(), c.target, c.method, c.path, 0)
 		var rerr *RequestError
 		if c.want == 0 {
 			if err != nil {
@@ -181,7 +180,7 @@ func TestRelayPolicyBlocksBeforeUpstream(t *testing.T) {
 // The worker path re-checks policy, so a job queued before a config change can't bypass it.
 func TestExecuteRelayEnforcesPolicy(t *testing.T) {
 	h := newTestHandler(t, []TargetConfig{{Name: "svc", URL: "http://127.0.0.1:1", AllowPaths: []string{"/ok"}}})
-	_, _, err := h.ExecuteRelay(context.Background(), "svc", "POST", "/nope", nil, nil)
+	_, _, err := h.ExecuteRelay(unscopedCtx(), "svc", "POST", "/nope", nil, nil)
 	var rerr *RequestError
 	if !errors.As(err, &rerr) || rerr.Status != http.StatusForbidden {
 		t.Fatalf("want 403 RequestError, got %v", err)

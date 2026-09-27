@@ -2,7 +2,6 @@ package relay
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -156,7 +155,7 @@ func TestExecuteRelayInjectsSecret(t *testing.T) {
 		Name: "svc", URL: upstream.URL, Timeout: 5 * time.Second,
 		SecretHeaders: map[string]string{"Authorization": "RELAY_TEST_KEY"},
 	}})
-	resp, _, err := h.ExecuteRelay(context.Background(), "svc", "POST", "/hook", nil, nil)
+	resp, _, err := h.ExecuteRelay(unscopedCtx(), "svc", "POST", "/hook", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +196,7 @@ func TestSecretOnRedirect(t *testing.T) {
 	h := NewHandler(registry, HandlerConfig{MaxRedirects: 3}, zerolog.Nop())
 
 	for _, path := range []string{"/cross", "/same"} {
-		resp, _, err := h.ExecuteRelay(context.Background(), "svc", "GET", path, nil, nil)
+		resp, _, err := h.ExecuteRelay(unscopedCtx(), "svc", "GET", path, nil, nil)
 		if err != nil {
 			t.Fatalf("%s: %v", path, err)
 		}

@@ -34,6 +34,14 @@ type Metrics struct {
 
 	jobsProcessed *prometheus.CounterVec
 	queueDepth    prometheus.Gauge
+
+	// Per-key / per-target views for the security and LLM dashboards. Label values are
+	// bounded: key names come from config, targets from the registry ("unknown" otherwise).
+	upstreamResponses *prometheus.CounterVec
+	rejections        *prometheus.CounterVec
+	streamTTFB        *prometheus.HistogramVec
+	streamDuration    *prometheus.HistogramVec
+	streamBytes       *prometheus.CounterVec
 }
 
 // New builds and registers all collectors against a private registry.
@@ -77,12 +85,35 @@ func New() *Metrics {
 			Name: "relayer_queue_depth",
 			Help: "Number of jobs currently waiting in the pending queue.",
 		}),
+		upstreamResponses: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "relayer_upstream_responses_total",
+			Help: "Final upstream outcome per relay/proxy call: HTTP status code, or \"error\" when no response.",
+		}, []string{"target", "key", "code"}),
+		rejections: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "relayer_rejections_total",
+			Help: "Requests refused before reaching the upstream, by reason (scope, method, path, body, not_found, bad_path, bad_method).",
+		}, []string{"target", "key", "reason"}),
+		streamTTFB: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "relayer_stream_ttfb_seconds",
+			Help:    "Proxy: time from request to the first response body byte sent to the client.",
+			Buckets: []float64{.1, .25, .5, 1, 2, 3, 5, 8, 13, 20, 30, 60},
+		}, []string{"target"}),
+		streamDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "relayer_stream_duration_seconds",
+			Help:    "Proxy: total time until the response stream ended.",
+			Buckets: []float64{.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600},
+		}, []string{"target"}),
+		streamBytes: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "relayer_stream_bytes_total",
+			Help: "Proxy: response bytes streamed to clients.",
+		}, []string{"target", "key"}),
 	}
 
 	reg.MustRegister(
 		m.httpRequests, m.httpDuration,
 		m.relayRequests, m.relayErrors, m.relayDuration, m.relayAttempts,
 		m.jobsProcessed, m.queueDepth,
+		m.upstreamResponses, m.rejections, m.streamTTFB, m.streamDuration, m.streamBytes,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
@@ -115,17 +146,22 @@ func (m *Metrics) RecordHTTP(method, route string, status int, d time.Duration) 
 	m.httpDuration.WithLabelValues(method, route).Observe(d.Seconds())
 }
 
-// RecordRelay records the outcome of a single relay (HTTP or worker path).
-// statusCode is the upstream status (0 when the relay errored before a response).
-func (m *Metrics) RecordRelay(target string, statusCode, attempts int, failed bool, d time.Duration) {
+// RecordRelay records the outcome of a single relay (HTTP, worker or proxy path) made on
+// behalf of key. statusCode is the upstream status (0 when the relay errored before a response).
+func (m *Metrics) RecordRelay(target, key string, statusCode, attempts int, failed bool, d time.Duration) {
 	if m == nil {
 		return
 	}
 	outcome := "success"
+	code := strconv.Itoa(statusCode)
+	if failed || statusCode == 0 {
+		code = "error"
+	}
 	if failed {
 		outcome = "error"
 		m.relayErrors.WithLabelValues(target).Inc()
 	}
+	m.upstreamResponses.WithLabelValues(target, key, code).Inc()
 	m.relayRequests.WithLabelValues(target, outcome).Inc()
 	m.relayDuration.WithLabelValues(target).Observe(d.Seconds())
 	if attempts > 0 {
@@ -147,4 +183,24 @@ func (m *Metrics) SetQueueDepth(n int64) {
 		return
 	}
 	m.queueDepth.Set(float64(n))
+}
+
+// RecordRejection records a request refused before anything was sent upstream.
+func (m *Metrics) RecordRejection(target, key, reason string) {
+	if m == nil {
+		return
+	}
+	m.rejections.WithLabelValues(target, key, reason).Inc()
+}
+
+// RecordStream records one proxied response stream.
+func (m *Metrics) RecordStream(target, key string, ttfb, total time.Duration, bytes int64) {
+	if m == nil {
+		return
+	}
+	if ttfb > 0 {
+		m.streamTTFB.WithLabelValues(target).Observe(ttfb.Seconds())
+	}
+	m.streamDuration.WithLabelValues(target).Observe(total.Seconds())
+	m.streamBytes.WithLabelValues(target, key).Add(float64(bytes))
 }

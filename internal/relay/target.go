@@ -52,6 +52,7 @@ type Target struct {
 type RequestError struct {
 	Status int
 	Msg    string
+	Reason string // metric label: scope, bad_method, not_found, bad_path, method, path, body
 }
 
 func (e *RequestError) Error() string { return e.Msg }
@@ -61,13 +62,13 @@ func (e *RequestError) Error() string { return e.Msg }
 // so "/v1/messages/../admin" is judged as "/admin".
 func (t Target) checkPolicy(method, resolvedPath string, bodyLen int) error {
 	if len(t.allowMethods) > 0 && !slices.Contains(t.allowMethods, method) {
-		return &RequestError{http.StatusForbidden, fmt.Sprintf("method %s not allowed for this target", method)}
+		return &RequestError{Status: http.StatusForbidden, Msg: fmt.Sprintf("method %s not allowed for this target", method), Reason: "method"}
 	}
 	if len(t.allowPaths) > 0 && !t.pathAllowed(resolvedPath) {
-		return &RequestError{http.StatusForbidden, "path not allowed for this target"}
+		return &RequestError{Status: http.StatusForbidden, Msg: "path not allowed for this target", Reason: "path"}
 	}
 	if t.maxBodyBytes > 0 && int64(bodyLen) > t.maxBodyBytes {
-		return &RequestError{http.StatusRequestEntityTooLarge, fmt.Sprintf("body exceeds %d bytes for this target", t.maxBodyBytes)}
+		return &RequestError{Status: http.StatusRequestEntityTooLarge, Msg: fmt.Sprintf("body exceeds %d bytes for this target", t.maxBodyBytes), Reason: "body"}
 	}
 	return nil
 }
@@ -159,6 +160,19 @@ func (t Target) isSecretHeader(name string) bool {
 		}
 	}
 	return false
+}
+
+// worstCase bounds a /relay call: every attempt timing out, plus the longest backoffs.
+func (t Target) worstCase() time.Duration {
+	d := time.Duration(t.Retries+1) * t.Timeout
+	for i := 0; i < t.Retries; i++ {
+		b := maxDelay
+		if i < 6 { // 500ms<<6 already exceeds maxDelay; also avoids shift overflow
+			b = min(baseDelay<<i, maxDelay)
+		}
+		d += b
+	}
+	return d
 }
 
 // setSecrets injects the target's credentials. Call it after client headers are applied:

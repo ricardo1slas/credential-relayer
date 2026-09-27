@@ -11,7 +11,8 @@ import (
 	"github.com/ricardo1slas/private_relayer/internal/auth"
 )
 
-const proxyWriteGrace = 5 * time.Second
+// writeGrace lets a 502 for a timed-out upstream still be written after a lifted write deadline.
+const writeGrace = 5 * time.Second
 
 // proxyDropRequest are client headers the proxy never forwards, on top of the /relay deny-list.
 var proxyDropRequest = map[string]struct{}{
@@ -38,14 +39,10 @@ var proxyDropResponse = map[string]struct{}{
 // idempotent. path is the escaped path after the target name, as the client sent it.
 func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request, targetName, path string) {
 	start := time.Now()
+	key := auth.KeyName(r.Context())
 	fail := func(status int, msg string) {
-		h.logger.Warn().Str("key", auth.KeyName(r.Context())).Str("target", targetName).Int("status", status).Msg("proxy rejected: " + msg)
+		h.logger.Warn().Str("key", key).Str("target", targetName).Int("status", status).Msg("proxy rejected: " + msg)
 		writeJSON(w, status, map[string]string{"error": msg, "target": targetName})
-	}
-
-	if !auth.TargetAllowed(r.Context(), targetName) {
-		fail(http.StatusForbidden, "key not permitted for this target")
-		return
 	}
 	if r.URL.RawQuery != "" {
 		path += "?" + r.URL.RawQuery
@@ -60,11 +57,11 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request, targetName, path
 		}
 		return
 	}
-	target, err := h.Authorize(targetName, r.Method, path, len(body))
+	target, err := h.Authorize(r.Context(), targetName, r.Method, path, len(body))
 	if err != nil {
 		var rerr *RequestError
 		if !errors.As(err, &rerr) {
-			rerr = &RequestError{http.StatusInternalServerError, "internal error"}
+			rerr = &RequestError{Status: http.StatusInternalServerError, Msg: "internal error"}
 		}
 		fail(rerr.Status, rerr.Msg)
 		return
@@ -75,7 +72,7 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request, targetName, path
 	// with a grace period so a 502 for a timed-out upstream can still be written.
 	ctx, cancel := context.WithTimeout(target.requestCtx(r.Context()), target.Timeout)
 	defer cancel()
-	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(target.Timeout + proxyWriteGrace))
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(target.Timeout + writeGrace))
 
 	finalURL, _ := buildTargetURL(target.BaseURL, path) // validated by Authorize
 	var reqBody io.Reader
@@ -103,8 +100,8 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request, targetName, path
 
 	resp, err := h.client.Do(out) // #nosec G704 -- see NewRequestWithContext above
 	if err != nil {
-		h.metrics.RecordRelay(target.Name, 0, 1, true, time.Since(start))
-		h.logger.Error().Err(err).Str("target", target.Name).Msg("proxy failed")
+		h.metrics.RecordRelay(target.Name, key, 0, 1, true, time.Since(start))
+		h.logger.Error().Err(err).Str("key", key).Str("target", target.Name).Msg("proxy failed")
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error(), "target": targetName})
 		return
 	}
@@ -116,20 +113,22 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request, targetName, path
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	n, truncated, err := h.stream(w, resp.Body, target)
-	h.metrics.RecordRelay(target.Name, resp.StatusCode, 1, false, time.Since(start))
+	n, ttfb, truncated, err := h.stream(w, resp.Body, target, start)
+	h.metrics.RecordRelay(target.Name, key, resp.StatusCode, 1, false, time.Since(start))
+	h.metrics.RecordStream(target.Name, key, ttfb, time.Since(start), n)
 
 	ev := h.logger.Info()
 	if err != nil || truncated {
 		ev = h.logger.Warn().Err(err).Bool("truncated", truncated)
 	}
-	ev.Str("target", target.Name).Str("method", r.Method).Int("status", resp.StatusCode).
+	ev.Str("key", key).Str("target", target.Name).Str("method", r.Method).Int("status", resp.StatusCode).
 		Int64("response_bytes", n).Dur("latency", time.Since(start)).Msg("proxied")
 }
 
 // stream copies body to w, flushing after every read so SSE events reach the client as they
-// arrive, redacting secrets across chunk boundaries, and capping at MaxResponseBytes.
-func (h *Handler) stream(w http.ResponseWriter, body io.Reader, t Target) (written int64, truncated bool, err error) {
+// arrive, redacting secrets across chunk boundaries, and capping at MaxResponseBytes. ttfb is
+// the time from start to the first byte sent to the client (0 if none).
+func (h *Handler) stream(w http.ResponseWriter, body io.Reader, t Target, start time.Time) (written int64, ttfb time.Duration, truncated bool, err error) {
 	rc := http.NewResponseController(w)
 	red := &streamRedactor{t: t}
 	limited := &io.LimitedReader{R: body, N: h.cfg.MaxResponseBytes + 1} // +1 detects overflow
@@ -142,22 +141,28 @@ func (h *Handler) stream(w http.ResponseWriter, body io.Reader, t Target) (writt
 		}
 		if n > 0 {
 			m, werr := w.Write(red.push(buf[:n]))
+			if m > 0 && ttfb == 0 {
+				ttfb = time.Since(start)
+			}
 			written += int64(m)
 			if werr != nil {
-				return written, truncated, werr
+				return written, ttfb, truncated, werr
 			}
 			_ = rc.Flush()
 		}
 		if truncated {
-			return written, true, nil // held-back bytes may be a secret prefix: dropped
+			return written, ttfb, true, nil // held-back bytes may be a secret prefix: dropped
 		}
 		if rerr != nil {
 			m, _ := w.Write(red.flush())
+			if m > 0 && ttfb == 0 {
+				ttfb = time.Since(start)
+			}
 			written += int64(m)
 			if errors.Is(rerr, io.EOF) {
 				rerr = nil
 			}
-			return written, false, rerr
+			return written, ttfb, false, rerr
 		}
 	}
 }
