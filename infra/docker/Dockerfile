@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # ---- Stage 1: build ----
-FROM golang:1.26.6-alpine AS builder
+FROM golang:1.27.1-alpine AS builder
 
 RUN apk add --no-cache ca-certificates git
 
@@ -23,7 +23,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
         ./cmd/relayer
 
 # ---- Stage 2: runtime ----
-FROM alpine:3.23
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates tzdata curl \
     && addgroup -S relayer \
