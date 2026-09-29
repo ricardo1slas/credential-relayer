@@ -23,7 +23,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
         ./cmd/relayer
 
 # ---- Stage 2: runtime ----
-FROM alpine:3.23
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates tzdata curl \
     && addgroup -S relayer \
