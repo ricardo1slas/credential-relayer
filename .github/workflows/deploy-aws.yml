@@ -33,7 +33,7 @@ jobs:
     # runner minutes / confusing error messages.
     if: github.repository == 'ricardo1slas/private_relayer'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4

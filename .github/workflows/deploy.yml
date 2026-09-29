@@ -36,7 +36,7 @@ jobs:
           github.event.workflow_run.event == 'push' &&
           github.event.workflow_run.head_repository.full_name == github.repository))
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Deploy exactly the commit ci tested, not whatever main points to now.
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}

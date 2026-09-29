@@ -22,7 +22,7 @@ jobs:
     name: govulncheck (reachable Go CVEs)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -36,7 +36,7 @@ jobs:
     name: gitleaks (secrets in history)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: install gitleaks
@@ -54,7 +54,7 @@ jobs:
     name: trivy (image CVEs)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
       - name: build image
         uses: docker/build-push-action@v7
@@ -78,7 +78,7 @@ jobs:
     name: trivy (Dockerfile + compose misconfigs)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: trivy config scan
         uses: aquasecurity/trivy-action@0.35.0
         with:
