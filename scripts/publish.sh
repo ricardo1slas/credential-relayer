@@ -16,6 +16,13 @@ expand() { echo "${1/#\~/$HOME}"; }
 RULES=$(expand "${PUBLISH_REPLACEMENTS:?set PUBLISH_REPLACEMENTS (see local.mk.example)}")
 [ -r "$RULES" ] || { echo "cannot read $RULES"; exit 1; }
 [ -z "$(git status --porcelain)" ] || { echo "working tree not clean: the export is built from committed main"; exit 1; }
+# Author emails are published with every commit. Refuse to run without the mapping (e.g. when the script is
+# run directly instead of through make, which is how the mapping once got skipped) unless explicitly allowed.
+if [ -z "${PUBLISH_MAILMAP:-}" ] && [ "${PUBLISH_ALLOW_AUTHOR_EMAILS:-}" != 1 ]; then
+  echo "PUBLISH_MAILMAP is not set: commits would be published with their original author emails."
+  echo "Run through make (reads local.mk), or set PUBLISH_ALLOW_AUTHOR_EMAILS=1 if that is intended."
+  exit 1
+fi
 
 OUT=$(mktemp -d)/export
 git clone -q --no-local --single-branch --branch main . "$OUT"
@@ -28,7 +35,7 @@ if [ -n "${PUBLISH_MAILMAP:-}" ]; then args+=(--mailmap "$(expand "$PUBLISH_MAIL
 (cd "$OUT" && git filter-repo "${args[@]}")
 
 # Verify. What each check can and cannot catch (tested by removing rules):
-#  - the rules check proves every value the rules list is gone; it is the ONLY guard for a known
+#  - the rules check proves every value the rules list is gone (literal and regex rules); it is the ONLY guard for a known
 #    value that doesn't look like a secret (e.g. the revoked dev key in prose, which gitleaks misses)
 #  - the tailnet-range check catches a device address the rules forgot
 #  - gitleaks catches new real-looking secrets
@@ -40,8 +47,13 @@ while IFS= read -r rule || [ -n "$rule" ]; do
   n=$((n + 1))
   [ -z "$rule" ] && continue
   needle=${rule%%==>*}
-  needle=${needle#literal:}
-  if grep -qF -- "$needle" <<<"$history"; then
+  case "$needle" in
+    regex:*) # same engine git filter-repo uses, so the check matches exactly what the rule replaces
+      found=$(python3 -c 'import re,sys; print(1 if re.search(sys.argv[1], sys.stdin.read()) else 0)' "${needle#regex:}" <<<"$history") ;;
+    glob:*) echo "FAIL: rule $n: glob rules are not verified; use literal or regex"; fail=1; continue ;;
+    *) found=$(grep -qF -- "${needle#literal:}" <<<"$history" && echo 1 || echo 0) ;;
+  esac
+  if [ "$found" = 1 ]; then
     echo "FAIL: rule $n still matches the export"
     fail=1
   fi
