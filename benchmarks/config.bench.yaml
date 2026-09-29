@@ -9,7 +9,7 @@ server:
 auth:
   api_keys:
     - name: "bench"
-      key: "bench-key-not-a-secret"   # stack is tailnet-only and torn down after each run
+      key: "bench-key-not-a-secret-000000000000"   # stack is tailnet-only and torn down after each run
 
 rate_limit:
   requests: 100000000

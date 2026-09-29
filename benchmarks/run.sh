@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PI=${PI:?set PI=<user>@<pi-host>}; HOST=${PI#*@}; DUR=${DUR:-20s}
-KEY=bench-key-not-a-secret
+KEY=bench-key-not-a-secret-000000000000
 OUT=benchmarks/results/$(date +%Y-%m-%d_%H%M)_$(git rev-parse --short HEAD).txt
 BODY='{"target":"mock","method":"GET","path":"/"}'
 COMPOSE='cd relayer/benchmarks && BIND_IP=$(tailscale ip -4) docker compose -f docker-compose.bench.yml'

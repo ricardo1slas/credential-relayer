@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -220,20 +221,22 @@ func TestRotationOverlapSharesIdentity(t *testing.T) {
 
 func TestKeyConfigValidate(t *testing.T) {
 	good := sha("x")
+	long := strings.Repeat("k", MinKeyLength)
 	cases := []struct {
 		name string
 		k    KeyConfig
 		ok   bool
 	}{
-		{"plaintext", KeyConfig{Name: "a", Key: "x"}, true},
+		{"plaintext", KeyConfig{Name: "a", Key: long}, true},
+		{"plaintext too short", KeyConfig{Name: "a", Key: long[1:]}, false},
 		{"hashed", KeyConfig{Name: "a", KeySHA256: good}, true},
-		{"no name", KeyConfig{Key: "x"}, false},
+		{"no name", KeyConfig{Key: long}, false},
 		{"neither key nor hash", KeyConfig{Name: "a"}, false},
-		{"both key and hash", KeyConfig{Name: "a", Key: "x", KeySHA256: good}, false},
+		{"both key and hash", KeyConfig{Name: "a", Key: long, KeySHA256: good}, false},
 		{"short hash", KeyConfig{Name: "a", KeySHA256: "abcd"}, false},
 		{"non-hex hash", KeyConfig{Name: "a", KeySHA256: good[:63] + "z"}, false},
-		{"bad expiry", KeyConfig{Name: "a", Key: "x", ExpiresAt: "next tuesday"}, false},
-		{"good expiry", KeyConfig{Name: "a", Key: "x", ExpiresAt: "2027-03-01"}, true},
+		{"bad expiry", KeyConfig{Name: "a", Key: long, ExpiresAt: "next tuesday"}, false},
+		{"good expiry", KeyConfig{Name: "a", Key: long, ExpiresAt: "2027-03-01"}, true},
 	}
 	for _, c := range cases {
 		if err := c.k.Validate(); (err == nil) != c.ok {

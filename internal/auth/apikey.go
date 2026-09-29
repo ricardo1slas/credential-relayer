@@ -31,6 +31,12 @@ type KeyConfig struct {
 	Targets   []string `koanf:"targets"`    // allowed relay targets; empty or ["*"] = all
 }
 
+// MinKeyLength is the shortest plaintext key accepted. Keys are hashed with a fast hash (SHA-256),
+// which is only safe for high-entropy secrets: a short, guessable key could be brute-forced from its
+// hash. make new-key produces 64 hex characters (256 bits). Hashed keys can't be measured, so the
+// guarantee there rests on generating them with make new-key.
+const MinKeyLength = 32
+
 // Validate rejects ambiguous or malformed key entries so a typo can't silently weaken auth.
 func (k KeyConfig) Validate() error {
 	if k.Name == "" {
@@ -38,6 +44,9 @@ func (k KeyConfig) Validate() error {
 	}
 	if (k.Key == "") == (k.KeySHA256 == "") {
 		return fmt.Errorf("key %q: set exactly one of key or key_sha256", k.Name)
+	}
+	if k.Key != "" && len(k.Key) < MinKeyLength {
+		return fmt.Errorf("key %q: plaintext keys must be at least %d characters (generate one with make new-key)", k.Name, MinKeyLength)
 	}
 	if k.KeySHA256 != "" {
 		if b, err := hex.DecodeString(k.KeySHA256); err != nil || len(b) != sha256.Size {

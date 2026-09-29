@@ -182,7 +182,7 @@ The annotated [`configs/config.example.yaml`](configs/config.example.yaml) lists
 auth:
   api_keys:
     - name: "phone"
-      key_sha256: "<make new-key prints this>"   # or `key:` for dev only
+      key_sha256: "<make new-key prints this>"   # or `key:` (dev only, 32+ chars)
       expires_at: "2027-03-01"                   # optional
       targets: ["gemini"]                        # least privilege; [] or ["*"] = all
 rate_limit: { requests: 100, window: 60s }
