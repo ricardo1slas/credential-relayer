@@ -41,7 +41,10 @@ if [ -n "${PUBLISH_MAILMAP:-}" ]; then args+=(--mailmap "$(expand "$PUBLISH_MAIL
 #  - gitleaks catches new real-looking secrets
 # So: when something personal lands in a commit, add a rule for it.
 fail=0
-history=$(cd "$OUT" && git log --all -p --format='%an <%ae>%n%cn <%ce>%n%B')
+# Everything published: file contents, commit messages, author/committer lines, and tag objects
+# (an annotated tag records its tagger's email).
+history=$(cd "$OUT" && git log --all -p --format='%an <%ae>%n%cn <%ce>%n%B' &&
+  git for-each-ref refs/tags --format='%(taggername) %(taggeremail)%0a%(contents)')
 n=0
 while IFS= read -r rule || [ -n "$rule" ]; do
   n=$((n + 1))
