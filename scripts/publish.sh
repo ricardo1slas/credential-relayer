@@ -19,7 +19,11 @@ RULES=$(expand "${PUBLISH_REPLACEMENTS:?set PUBLISH_REPLACEMENTS (see local.mk.e
 
 OUT=$(mktemp -d)/export
 git clone -q --no-local --single-branch --branch main . "$OUT"
-args=(--replace-text "$RULES" --replace-message "$RULES" --force --quiet)
+# Paths removed from every commit: personal notes that were tracked early on, and binaries committed
+# by mistake (a 55 MB third-party installer, a build artifact).
+EXCLUDE=(private/ AWSCLIV2.pkg relayer)
+args=(--replace-text "$RULES" --replace-message "$RULES" --invert-paths --force --quiet)
+for p in "${EXCLUDE[@]}"; do args+=(--path "$p"); done
 if [ -n "${PUBLISH_MAILMAP:-}" ]; then args+=(--mailmap "$(expand "$PUBLISH_MAILMAP")"); fi
 (cd "$OUT" && git filter-repo "${args[@]}")
 
@@ -48,6 +52,10 @@ if [ -n "${PUBLISH_MAILMAP:-}" ]; then
     grep -qF -- "<$old>" <<<"$history" && { echo "FAIL: an author email the mailmap replaces is still present"; fail=1; }
   done < <(grep -oE '<[^>]+>[[:space:]]*$' "$(expand "$PUBLISH_MAILMAP")" | tr -d '<> \t')
 fi
+ever=$(cd "$OUT" && git log --all --format= --name-only | sort -u)
+for p in "${EXCLUDE[@]}"; do
+  q=${p%/}; if grep -qE "^${q//./\\.}(/|$)" <<<"$ever"; then echo "FAIL: excluded path $p is still in history"; fail=1; fi
+done
 # Independent of the rules: any Tailscale-range address (100.64.0.0/10) is someone's device. The
 # range's own network address (100.64.0.0, in firewall docs) is fine.
 if leaked=$(grep -oE '\b100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b' <<<"$history" | grep -vx '100\.64\.0\.0'); then
