@@ -23,7 +23,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: golangci/golangci-lint-action@v8
+      - uses: golangci/golangci-lint-action@v9
         with:
           # Must be compiled with Go ≥ the version in go.mod. Local is v2.11.4
           # via brew; pin to match so CI failures mirror local.
