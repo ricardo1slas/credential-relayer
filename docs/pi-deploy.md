@@ -15,6 +15,18 @@ echo GRAFANA_PASSWORD=<strong-pw> > ~/relayer/infra/docker/.env   # after first 
 `configs/config.yaml` (gitignored, holds API keys) is copied by the first
 manual `make deploy-pi` and is protected from `--delete` afterwards.
 
+### Grafana admin password
+`make deploy-pi` (and so the CI deploy) refuses to start the stack unless `GRAFANA_PASSWORD`
+in `~/relayer/infra/docker/.env` is set to something other than `admin`. The `admin/admin`
+default in the compose file is for local `make docker-up` only. The first deploy therefore
+fails after the rsync: write the `.env` line above, then deploy again.
+
+Grafana applies `GF_SECURITY_ADMIN_PASSWORD` only when the `grafana-data` volume is first
+initialised. On an existing install, changing `.env` does not change the login; reset it once:
+```bash
+docker exec relayer-grafana grafana cli admin reset-admin-password '<strong-pw>'
+```
+
 ## Manual deploy
 ```bash
 make deploy-pi                 # PI=<user>@<pi-host>, e.g. from local.mk

@@ -152,6 +152,8 @@ services:
       - prometheus
     environment:
       GF_SECURITY_ADMIN_USER: admin
+      # admin/admin is a DEV-ONLY default for `make docker-up`; `make deploy-pi` refuses it.
+      # Applied only when the grafana-data volume is first created (see docs/pi-deploy.md).
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"

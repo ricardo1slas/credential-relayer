@@ -75,8 +75,12 @@ sync-pi:
 		--filter='P configs/config.yaml' --filter='P infra/docker/.env' --filter='P infra/docker/.env.relayer' --include configs/config.yaml --filter=':- .gitignore' ./ $(PI):relayer/
 
 deploy-pi: sync-pi
+	# Refuse the dev-only Grafana admin/admin: unset, empty and "admin" all resolve to "admin" in compose.
 	# restart: config.yaml is a bind mount, so a config-only change does not recreate the container
-	ssh $(PI) 'cd relayer/infra/docker && BIND_IP=$$(tailscale ip -4) docker compose up -d --build && docker compose restart relayer'
+	ssh $(PI) 'cd relayer/infra/docker && \
+		if docker compose config --format json grafana | grep -q "\"GF_SECURITY_ADMIN_PASSWORD\": *\"admin\""; then \
+			echo "refusing to deploy: set GRAFANA_PASSWORD (not admin) in ~/relayer/infra/docker/.env on the Pi" >&2; exit 1; fi && \
+		BIND_IP=$$(tailscale ip -4) docker compose up -d --build && docker compose restart relayer'
 
 # Generate an API key and the config line for it. Hand the key to the client; put only the hash in config.
 new-key:
