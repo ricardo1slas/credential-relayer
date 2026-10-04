@@ -33,5 +33,6 @@ headers, dropping any client header that folds to the same name. On the Pi, the 
 - Rotating an upstream secret needs a restart, since values are read once.
 - Secrets never reach Redis, are stripped on cross-host or scheme-changing redirects, and are redacted
   when echoed (ADR 0005). An upstream that re-encodes the secret (e.g. base64) defeats redaction.
-- A `SecretProvider` interface seam is being added, with an env-only implementation, so Vault or a cloud
-  secrets manager could plug in later without changing how targets reference secrets.
+- Values are resolved through a `SecretProvider` interface (`internal/relay/target.go`) whose only
+  implementation reads the environment, so Vault or a cloud secrets manager could plug in later without
+  changing how targets reference secrets.
