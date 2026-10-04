@@ -1,7 +1,7 @@
 name: deploy-aws-dev
 
 # Manual only (AWS credits ran out; the Pi deploy in deploy.yml is the default).
-# Prod is intentionally not wired -- see how_to.md §12.
+# Prod is intentionally not wired -- see docs/build-log.md §12.6.
 on:
   workflow_dispatch:
 

@@ -280,7 +280,7 @@ make bench       # benchmark suite on the Pi
 go test ./internal/relay -fuzz=FuzzPathPolicy -fuzztime=30s
 ```
 
-[`how_to.md`](how_to.md) is the long-form build log: what was built in each phase, how, and why, including the
+[`docs/build-log.md`](docs/build-log.md) is the long-form build log: what was built in each phase, how, and why, including the
 bugs found along the way.
 
 ## License

@@ -121,7 +121,7 @@ No method allowlist. `CONNECT`, `TRACE`, `OPTIONS` accepted. `CONNECT` to a non-
 ### T5. Weak secret posture -- **HIGH**
 *Category: Information disclosure.*
 - `configs/config.yaml` ships with a real-looking API key `<revoked dev key>` and is tracked in git.
-- Same value appears in `how_to.md` in curl examples (flagged by gitleaks, see §6).
+- Same value appears in `how_to.md` (now `docs/build-log.md`) in curl examples (flagged by gitleaks, see §6).
 - `configs/config.example.yaml` also has a placeholder, but the example and the live file coexist, so committing changes to config.yaml is easy to forget.
 - No support yet for loading keys from Secrets Manager / env-file / SOPS.
 - API keys are stored in-process in a plaintext map.
