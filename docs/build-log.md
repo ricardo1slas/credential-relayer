@@ -1,6 +1,6 @@
 # Build Log: Credential Relayer
 
-> The phase-by-phase record of what was decided, what broke, what the security reviews found, and why. Earlier sections describe the project as it was at the time, with dated **Update** notes where later work changed the facts. For the current state, start with the [README](../README.md).
+> The phase-by-phase record of what was decided, what broke, what the security reviews found, and why. Earlier sections describe the project as it was at the time, with dated **Update** notes where later work changed the facts. For the current state, start with the [README](../README.md); the main design decisions are recorded as ADRs in [`adr/`](adr/README.md).
 >
 > The live deployment moved from AWS to a Raspberry Pi over Tailscale (§15); the AWS sections are kept as the reference path. Phase 12 (§16) is where the project became a credential broker. The project was called `private_relayer` until 2026-09-27; older entries use that name.
 
