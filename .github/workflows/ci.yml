@@ -54,7 +54,16 @@ jobs:
       - name: go test
         # Queue tests read TEST_REDIS_ADDR, falling back to localhost:6379
         # which is where the service container is mapped.
-        run: go test -race -count=1 -timeout=3m ./...
+        shell: bash # -o pipefail, so a test failure still fails through tee
+        run: go test -race -count=1 -timeout=3m -coverprofile=coverage.out -covermode=atomic ./... | tee test.out
+      - name: coverage summary
+        run: |
+          {
+            echo "### Coverage: $(go tool cover -func=coverage.out | awk '/^total:/ {print $NF}')"
+            echo '| package | coverage |'
+            echo '|---|---|'
+            sed -nE 's/^(ok)?[[:space:]]+([^[:space:]]+).*coverage: ([0-9.]+%).*/| \2 | \3 |/p' test.out
+          } >> "$GITHUB_STEP_SUMMARY"
 
   build:
     name: build (docker image)

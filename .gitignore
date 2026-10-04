@@ -7,6 +7,7 @@ configs/config.yaml
 # Build output
 bin/
 /relayer
+coverage.out
 
 # Large installers (never belong in git)
 *.pkg
