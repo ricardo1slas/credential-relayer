@@ -127,9 +127,20 @@ var framingHeaders = map[string]struct{}{
 	"keep-alive": {}, "upgrade": {}, "te": {}, "trailer": {}, "content-type": {},
 }
 
-// resolveSecrets reads each secret header's value from the environment. It fails fast on a
+// SecretProvider resolves a secret_headers reference (today an env var NAME) to its value.
+// It is the seam for Vault, AWS Secrets Manager and the like; only EnvSecrets exists today.
+type SecretProvider interface {
+	Lookup(name string) (string, bool)
+}
+
+// EnvSecrets reads secrets from the process environment. It is the default provider.
+type EnvSecrets struct{}
+
+func (EnvSecrets) Lookup(name string) (string, bool) { return os.LookupEnv(name) }
+
+// resolveSecrets reads each secret header's value from sp. It fails fast on a
 // missing or unusable variable, and never puts a value in an error message.
-func resolveSecrets(target string, m map[string]string) ([]secretHeader, error) {
+func resolveSecrets(sp SecretProvider, target string, m map[string]string) ([]secretHeader, error) {
 	out := make([]secretHeader, 0, len(m))
 	for name, envVar := range m {
 		folded := foldHeaderName(name)
@@ -139,7 +150,7 @@ func resolveSecrets(target string, m map[string]string) ([]secretHeader, error) 
 		if _, bad := framingHeaders[folded]; bad {
 			return nil, fmt.Errorf("target %q: header %q cannot be a secret header", target, name)
 		}
-		v, ok := os.LookupEnv(envVar)
+		v, ok := sp.Lookup(envVar)
 		if !ok || v == "" {
 			return nil, fmt.Errorf("target %q: secret header %q: env var %q is unset or empty", target, name, envVar)
 		}
@@ -212,7 +223,13 @@ type TargetRegistry struct {
 
 // NewTargetRegistry validates every target at startup: parses the URL, enforces
 // scheme, and fails fast on misconfiguration so nothing sneaks through at request time.
+// Secret headers are read from the environment.
 func NewTargetRegistry(targets []TargetConfig) (*TargetRegistry, error) {
+	return NewTargetRegistryWithSecrets(targets, EnvSecrets{})
+}
+
+// NewTargetRegistryWithSecrets is NewTargetRegistry with secret headers resolved by sp.
+func NewTargetRegistryWithSecrets(targets []TargetConfig, sp SecretProvider) (*TargetRegistry, error) {
 	m := make(map[string]Target, len(targets))
 	for _, t := range targets {
 		if t.Name == "" {
@@ -247,7 +264,7 @@ func NewTargetRegistry(targets []TargetConfig) (*TargetRegistry, error) {
 			retries = 3
 		}
 
-		secrets, err := resolveSecrets(t.Name, t.SecretHeaders)
+		secrets, err := resolveSecrets(sp, t.Name, t.SecretHeaders)
 		if err != nil {
 			return nil, err
 		}

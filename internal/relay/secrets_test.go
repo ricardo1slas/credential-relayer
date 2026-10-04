@@ -37,7 +37,7 @@ func TestResolveSecrets(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := resolveSecrets("svc", tt.in)
+			got, err := resolveSecrets(EnvSecrets{}, "svc", tt.in)
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -67,6 +67,28 @@ func TestNewTargetRegistryFailsOnMissingSecret(t *testing.T) {
 	}})
 	if err == nil {
 		t.Fatal("expected startup error for unset secret env var")
+	}
+}
+
+type mapSecrets map[string]string
+
+func (m mapSecrets) Lookup(name string) (string, bool) { v, ok := m[name]; return v, ok }
+
+func TestNewTargetRegistryUsesSecretProvider(t *testing.T) {
+	cfg := []TargetConfig{{
+		Name: "svc", URL: "https://example.com",
+		SecretHeaders: map[string]string{"X-Api-Key": "RELAY_TEST_FROM_PROVIDER"}, // not in the env
+	}}
+	reg, err := NewTargetRegistryWithSecrets(cfg, mapSecrets{"RELAY_TEST_FROM_PROVIDER": testSecret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tg, _ := reg.Get("svc")
+	if len(tg.secrets) != 1 || tg.secrets[0].value != testSecret {
+		t.Fatalf("secret not resolved from provider: %+v", tg.secrets)
+	}
+	if _, err := NewTargetRegistryWithSecrets(cfg, mapSecrets{}); err == nil || !strings.Contains(err.Error(), "unset or empty") {
+		t.Fatalf("missing secret should fail fast, got %v", err)
 	}
 }
 
