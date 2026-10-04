@@ -8,12 +8,15 @@ import (
 	"time"
 
 	"github.com/ricardo1slas/credential-relayer/internal/auth"
+	"github.com/rs/zerolog"
 )
 
-func TestLimiter_AllowsUnderLimit(t *testing.T) {
-	limiter := New(Config{Requests: 5, Window: time.Minute})
+func testMiddleware(l Limiter) func(http.Handler) http.Handler {
+	return Middleware(l, false, zerolog.Nop(), nil)
+}
 
-	handler := limiter.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestLimiter_AllowsUnderLimit(t *testing.T) {
+	handler := testMiddleware(NewMemory(Config{Requests: 5, Window: time.Minute}))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -30,9 +33,7 @@ func TestLimiter_AllowsUnderLimit(t *testing.T) {
 }
 
 func TestLimiter_RejectsOverLimit(t *testing.T) {
-	limiter := New(Config{Requests: 3, Window: time.Minute})
-
-	handler := limiter.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := testMiddleware(NewMemory(Config{Requests: 3, Window: time.Minute}))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -72,9 +73,7 @@ func TestLimiter_RejectsOverLimit(t *testing.T) {
 }
 
 func TestLimiter_PerClientIsolation(t *testing.T) {
-	limiter := New(Config{Requests: 2, Window: time.Minute})
-
-	handler := limiter.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := testMiddleware(NewMemory(Config{Requests: 2, Window: time.Minute}))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -110,9 +109,7 @@ func TestLimiter_PerClientIsolation(t *testing.T) {
 }
 
 func TestLimiter_UsesAPIKeyName(t *testing.T) {
-	limiter := New(Config{Requests: 1, Window: time.Minute})
-
-	handler := limiter.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := testMiddleware(NewMemory(Config{Requests: 1, Window: time.Minute}))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -146,9 +143,7 @@ func TestLimiter_UsesAPIKeyName(t *testing.T) {
 
 func TestLimiter_TokensRefill(t *testing.T) {
 	// 10 requests per second = tokens refill fast.
-	limiter := New(Config{Requests: 10, Window: time.Second})
-
-	handler := limiter.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := testMiddleware(NewMemory(Config{Requests: 10, Window: time.Second}))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 

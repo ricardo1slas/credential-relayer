@@ -35,6 +35,8 @@ type APIKeyConfig struct {
 type RateLimitConfig struct {
 	Requests int           `koanf:"requests"`
 	Window   time.Duration `koanf:"window"`
+	Backend  string        `koanf:"backend"`   // memory | redis (default redis: shared across instances)
+	FailOpen bool          `koanf:"fail_open"` // on backend error: true = allow, false = 503
 }
 
 type RelayConfig struct {
@@ -153,6 +155,9 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.RateLimit.Window == 0 {
 		cfg.RateLimit.Window = time.Minute
+	}
+	if cfg.RateLimit.Backend == "" {
+		cfg.RateLimit.Backend = "redis"
 	}
 	if cfg.Relay.MaxRequestBytes == 0 {
 		cfg.Relay.MaxRequestBytes = 1 << 20 // 1 MiB

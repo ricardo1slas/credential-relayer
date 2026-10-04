@@ -16,7 +16,8 @@ type RouterDeps struct {
 	Logger          zerolog.Logger
 	RelayHandler    *relay.Handler
 	APIKeyAuth      *auth.APIKeyAuth
-	Limiter         *ratelimit.Limiter
+	Limiter         ratelimit.Limiter
+	FailOpen        bool // rate limiter backend errors let requests through
 	Queue           *queue.Queue
 	RedisClient     *redis.Client
 	Metrics         *metrics.Metrics
@@ -40,7 +41,7 @@ func NewRouter(deps RouterDeps) chi.Router {
 	// API routes -- auth + rate limiting.
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(deps.APIKeyAuth.Middleware)
-		r.Use(deps.Limiter.Middleware)
+		r.Use(ratelimit.Middleware(deps.Limiter, deps.FailOpen, deps.Logger, deps.Metrics))
 		r.Post("/relay", deps.RelayHandler.ServeHTTP)
 		r.Post("/webhook", webhookHandler(deps.Queue, deps.RelayHandler, deps.MaxRequestBytes))
 		r.Get("/jobs/{id}", jobStatusHandler(deps.Queue))

@@ -42,6 +42,8 @@ type Metrics struct {
 	streamTTFB        *prometheus.HistogramVec
 	streamDuration    *prometheus.HistogramVec
 	streamBytes       *prometheus.CounterVec
+
+	rateLimitBackendErrors *prometheus.CounterVec
 }
 
 // New builds and registers all collectors against a private registry.
@@ -107,6 +109,10 @@ func New() *Metrics {
 			Name: "relayer_stream_bytes_total",
 			Help: "Proxy: response bytes streamed to clients.",
 		}, []string{"target", "key"}),
+		rateLimitBackendErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "relayer_ratelimit_backend_errors_total",
+			Help: "Rate limit checks that failed in the backend, by what the request got (allowed = fail-open, denied = fail-closed).",
+		}, []string{"decision"}),
 	}
 
 	reg.MustRegister(
@@ -114,6 +120,7 @@ func New() *Metrics {
 		m.relayRequests, m.relayErrors, m.relayDuration, m.relayAttempts,
 		m.jobsProcessed, m.queueDepth,
 		m.upstreamResponses, m.rejections, m.streamTTFB, m.streamDuration, m.streamBytes,
+		m.rateLimitBackendErrors,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
@@ -203,4 +210,12 @@ func (m *Metrics) RecordStream(target, key string, ttfb, total time.Duration, by
 	}
 	m.streamDuration.WithLabelValues(target).Observe(total.Seconds())
 	m.streamBytes.WithLabelValues(target, key).Add(float64(bytes))
+}
+
+// RecordRateLimitBackendError records a rate limit check the backend could not answer.
+func (m *Metrics) RecordRateLimitBackendError(decision string) {
+	if m == nil {
+		return
+	}
+	m.rateLimitBackendErrors.WithLabelValues(decision).Inc()
 }

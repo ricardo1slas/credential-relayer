@@ -9,8 +9,15 @@ import (
 	"time"
 
 	"github.com/ricardo1slas/credential-relayer/internal/auth"
+	"github.com/ricardo1slas/credential-relayer/internal/metrics"
 	"github.com/rs/zerolog"
 )
+
+// Limiter decides whether key may make one more request. Memory keeps buckets in
+// process; Redis shares them across every instance behind the load balancer.
+type Limiter interface {
+	Allow(ctx context.Context, key string) (allowed bool, retryAfter time.Duration, err error)
+}
 
 type Config struct {
 	Requests int           `koanf:"requests"` // max requests per window
@@ -26,17 +33,18 @@ type bucket struct {
 	maxTokens float64
 }
 
-// Limiter implements a per-client token bucket rate limiter.
-type Limiter struct {
+// Memory implements a per-client token bucket rate limiter in process memory.
+// Each instance has its own buckets, so N instances allow N times the limit.
+type Memory struct {
 	buckets sync.Map // key name -> *bucket
 	cfg     Config
 }
 
-func New(cfg Config) *Limiter {
-	return &Limiter{cfg: cfg}
+func NewMemory(cfg Config) *Memory {
+	return &Memory{cfg: cfg}
 }
 
-func (l *Limiter) getBucket(key string) *bucket {
+func (l *Memory) getBucket(key string) *bucket {
 	rate := float64(l.cfg.Requests) / l.cfg.Window.Seconds()
 	maxTokens := float64(l.cfg.Requests)
 
@@ -53,9 +61,9 @@ func (l *Limiter) getBucket(key string) *bucket {
 	return b
 }
 
-// allow checks if the client can make a request, consuming one token if so.
-// Returns (allowed, retryAfter).
-func (l *Limiter) allow(key string) (bool, time.Duration) {
+// Allow checks if the client can make a request, consuming one token if so.
+// It never returns an error.
+func (l *Memory) Allow(_ context.Context, key string) (bool, time.Duration, error) {
 	b := l.getBucket(key)
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -70,18 +78,18 @@ func (l *Limiter) allow(key string) (bool, time.Duration) {
 
 	if b.tokens >= 1 {
 		b.tokens--
-		return true, 0
+		return true, 0, nil
 	}
 
 	// Calculate how long until one token is available.
 	retryAfter := time.Duration((1 - b.tokens) / b.rate * float64(time.Second))
-	return false, retryAfter
+	return false, retryAfter, nil
 }
 
 // StartEviction periodically removes buckets that haven't been touched in 10×window.
 // Without this, the sync.Map grows unboundedly as unique keys (API-key names or IPs)
 // show up -- a slow memory leak exploitable by an attacker rotating through IPs.
-func (l *Limiter) StartEviction(ctx context.Context, logger zerolog.Logger) {
+func (l *Memory) StartEviction(ctx context.Context, logger zerolog.Logger) {
 	sweep := l.cfg.Window * 2
 	if sweep < 30*time.Second {
 		sweep = 30 * time.Second
@@ -116,25 +124,46 @@ func (l *Limiter) StartEviction(ctx context.Context, logger zerolog.Logger) {
 }
 
 // Middleware returns an HTTP middleware that rate limits requests per API key.
-func (l *Limiter) Middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := auth.KeyName(r.Context())
-		if key == "" {
-			key = r.RemoteAddr // fallback if no auth
-		}
+// If the backend errors, failOpen lets the request through; otherwise it is refused
+// with 503. Not 429: the client did nothing wrong, and a 429 would tell it to back
+// off as if it had spent its budget.
+func Middleware(l Limiter, failOpen bool, logger zerolog.Logger, m *metrics.Metrics) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := auth.KeyName(r.Context())
+			if key == "" {
+				key = r.RemoteAddr // fallback if no auth
+			}
 
-		allowed, retryAfter := l.allow(key)
-		if !allowed {
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
-			w.WriteHeader(http.StatusTooManyRequests)
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"error":       "rate limit exceeded",
-				"retry_after": retryAfter.String(),
-			})
-			return
-		}
+			allowed, retryAfter, err := l.Allow(r.Context(), key)
+			if err != nil {
+				decision := "denied"
+				if failOpen {
+					decision = "allowed"
+				}
+				logger.Warn().Err(err).Str("decision", decision).Msg("rate limit backend error")
+				m.RecordRateLimitBackendError(decision)
+				if failOpen {
+					next.ServeHTTP(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "rate limiter unavailable"})
+				return
+			}
+			if !allowed {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Retry-After", fmt.Sprintf("%.0f", retryAfter.Seconds()))
+				w.WriteHeader(http.StatusTooManyRequests)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"error":       "rate limit exceeded",
+					"retry_after": retryAfter.String(),
+				})
+				return
+			}
 
-		next.ServeHTTP(w, r)
-	})
+			next.ServeHTTP(w, r)
+		})
+	}
 }

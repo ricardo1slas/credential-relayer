@@ -101,7 +101,7 @@ func newStack(t *testing.T, opts stackOpts) *stack {
 			{Name: "scoped", Key: scopedAPIKey, Targets: []string{"other"}},
 			{Name: "tenant-b", Key: otherAPIKey},
 		}),
-		Limiter:         ratelimit.New(ratelimit.Config{Requests: reqs, Window: win}),
+		Limiter:         ratelimit.NewMemory(ratelimit.Config{Requests: reqs, Window: win}),
 		Queue:           q,
 		RedisClient:     rc,
 		Metrics:         m,

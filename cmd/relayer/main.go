@@ -84,12 +84,6 @@ func main() {
 	}
 	apiKeyAuth := auth.NewAPIKeyAuth(authKeys).WithLogger(logger)
 
-	// Build rate limiter from config.
-	limiter := ratelimit.New(ratelimit.Config{
-		Requests: cfg.RateLimit.Requests,
-		Window:   cfg.RateLimit.Window,
-	})
-
 	// Connect to Redis.
 	redisClient, err := queue.NewRedisClient(queue.RedisConfig{
 		Addr:     cfg.Queue.Redis.Addr,
@@ -107,6 +101,22 @@ func main() {
 	if cfg.Metrics.Enabled {
 		m = metrics.New()
 	}
+
+	// Build rate limiter from config. Redis shares one budget per key across every
+	// instance; memory is per process, so N instances would allow N times the limit.
+	rlCfg := ratelimit.Config{Requests: cfg.RateLimit.Requests, Window: cfg.RateLimit.Window}
+	var limiter ratelimit.Limiter
+	var memLimiter *ratelimit.Memory
+	switch cfg.RateLimit.Backend {
+	case "redis":
+		limiter = ratelimit.NewRedis(redisClient, rlCfg)
+	case "memory":
+		memLimiter = ratelimit.NewMemory(rlCfg)
+		limiter = memLimiter
+	default:
+		logger.Fatal().Str("backend", cfg.RateLimit.Backend).Msg(`invalid rate_limit.backend: must be "memory" or "redis"`)
+	}
+	logger.Info().Str("backend", cfg.RateLimit.Backend).Bool("fail_open", cfg.RateLimit.FailOpen).Msg("rate limiter")
 
 	// Build queue and worker pool.
 	jobQueue := queue.NewQueue(redisClient, queue.Config{
@@ -134,6 +144,7 @@ func main() {
 		RelayHandler:    relayHandler,
 		APIKeyAuth:      apiKeyAuth,
 		Limiter:         limiter,
+		FailOpen:        cfg.RateLimit.FailOpen,
 		Queue:           jobQueue,
 		RedisClient:     redisClient,
 		Metrics:         m,
@@ -153,7 +164,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go workerPool.Start(ctx)
-	go limiter.StartEviction(ctx, logger)
+	if memLimiter != nil {
+		go memLimiter.StartEviction(ctx, logger)
+	}
 
 	// Metrics: serve /metrics on a dedicated port (kept off the public ALB listener,
 	// which only forwards :8080) and poll queue depth into the gauge.

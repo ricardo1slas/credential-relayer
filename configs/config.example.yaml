@@ -13,6 +13,13 @@ auth:
 rate_limit:
   requests: 100
   window: 60s
+  # redis (default): one budget per key shared by every instance. Redis is always
+  # configured (the queue needs it), so this is effectively the default.
+  # memory: per process, so N instances allow N x the limit. Single-instance only.
+  backend: redis
+  # On a Redis error: false (default) refuses with 503, true lets the request through.
+  # Either way it is logged and counted in relayer_ratelimit_backend_errors_total.
+  fail_open: false
 
 relay:
   # Inbound request body cap -- rejects anything larger with 413.
