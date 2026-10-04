@@ -76,9 +76,11 @@ sync-pi:
 
 deploy-pi: sync-pi
 	# Refuse the dev-only Grafana admin/admin: unset, empty and "admin" all resolve to "admin" in compose.
+	# Fails closed: if compose can't resolve the password at all, the deploy is refused too.
 	# restart: config.yaml is a bind mount, so a config-only change does not recreate the container
 	ssh $(PI) 'cd relayer/infra/docker && \
-		if docker compose config --format json grafana | grep -q "\"GF_SECURITY_ADMIN_PASSWORD\": *\"admin\""; then \
+		pw=$$(docker compose config grafana 2>/dev/null | sed -n "s/^ *GF_SECURITY_ADMIN_PASSWORD: *//p" | tr -d "\""); \
+		if [ -z "$$pw" ] || [ "$$pw" = admin ]; then \
 			echo "refusing to deploy: set GRAFANA_PASSWORD (not admin) in ~/relayer/infra/docker/.env on the Pi" >&2; exit 1; fi && \
 		BIND_IP=$$(tailscale ip -4) docker compose up -d --build && docker compose restart relayer'
 
