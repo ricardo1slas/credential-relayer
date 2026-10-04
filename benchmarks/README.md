@@ -15,7 +15,20 @@ relayer + redis + nginx mock upstream), runs the scenarios below, saves the outp
 |---|---|
 | mock direct, c=50 | Ceiling: the upstream + network + load generator, no relayer |
 | relay, c=50 | Steady-state relay throughput and latency |
+| mock direct, c=200 | Ceiling at the overload concurrency, no relayer |
 | relay, c=200 | Behaviour under overload (queuing, saturation) |
+
+Every relay scenario has a direct baseline at the same concurrency and duration, and the run
+ends with a **relayer overhead** block per concurrency level:
+
+- **delta p50 / delta p95**: relay latency minus direct latency (ms).
+- **throughput ratio**: relay req/s divided by direct req/s (1.00 = no throughput cost).
+
+What is compared: the relay scenarios send `POST /api/v1/relay` with
+`{"target":"mock","method":"GET","path":"/"}`; the relayer then does `GET /` on the mock over
+the compose network. The direct scenarios do that same `GET /` straight to the mock's published
+port (:8082), over the same tailnet path. So the delta is everything the relayer adds: auth,
+the (in-memory) rate-limit check, request/response handling, and the extra upstream hop.
 
 ## Method / caveats
 - Load comes from a Mac over Tailscale, so latency includes the tailnet hop (WireGuard) and
@@ -32,6 +45,20 @@ relayer + redis + nginx mock upstream), runs the scenarios below, saves the outp
 | mock direct, c=50 (ceiling) | 1639 | 29 ms | 48 ms | 67 ms | 0 |
 | relay, c=50 | 976 | 46 ms | 98 ms | 135 ms | 0 |
 | relay, c=200 | 1048 | 168 ms | 409 ms | 580 ms | 0 |
+
+No direct c=200 baseline was measured in that run.
+
+### Relayer overhead
+
+| Concurrency | delta p50 | delta p95 | throughput ratio |
+|---|---|---|---|
+| c=50 (derived) | +17.3 ms | +50.2 ms | 0.60 |
+| c=50 | TODO(<pi-user>): fill after make bench on the Pi | TODO(<pi-user>) | TODO(<pi-user>) |
+| c=200 | TODO(<pi-user>): fill after make bench on the Pi | TODO(<pi-user>) | TODO(<pi-user>) |
+
+The "derived" row is computed by hand from `results/2026-09-24_2031_6e7edc7.txt`, the old
+single-baseline run (mock direct c=50 vs relay c=50, same run, 20s each). Replace both TODO
+rows with the `relayer overhead` block from the next `make bench` results file.
 
 ### Optimisation log: connection reuse (found via pprof)
 
