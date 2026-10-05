@@ -10,8 +10,11 @@ import (
 
 const (
 	keyPrefix = "ratelimit:"
-	// redisTimeout bounds each check so a hung Redis can't stall requests.
-	redisTimeout = 200 * time.Millisecond
+	// redisTimeout bounds each check so a hung Redis can't stall requests. 200ms was too tight:
+	// a 150-request burst on the Pi (cold pool, CPU saturated) blew it once, and fail-closed
+	// turned that into a 503. A healthy check is sub-millisecond; 1s only costs anything when
+	// Redis is actually down.
+	redisTimeout = time.Second
 )
 
 // tokenBucket refills and spends one token atomically. It reads the clock with
