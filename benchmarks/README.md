@@ -7,6 +7,12 @@ brew install hey      # load generator
 make bench            # or: DUR=30s ./benchmarks/run.sh
 ```
 
+**Tailnet policy:** the load generator reaches the bench stack on `tcp:8081` (relayer), `tcp:8082`
+(mock) and `tcp:9090` (pprof), which the deny-by-default policy in
+[`docs/tailscale-policy.hujson`](../docs/tailscale-policy.hujson) does not allow. Add them to the
+member -> `tag:pi` rule for the run and remove them afterwards; `run.sh` checks all three and exits
+early if any is unreachable.
+
 `run.sh` syncs the repo to the Pi, starts a throwaway stack (`docker-compose.bench.yml`:
 relayer + redis + nginx mock upstream), runs the scenarios below, saves the output to
 `results/<date>_<commit>.txt`, then tears the stack down. The live stack is never touched.

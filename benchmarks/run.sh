@@ -17,6 +17,10 @@ command -v hey >/dev/null || { echo "install hey: brew install hey"; exit 1; }
 
 make sync-pi >/dev/null
 ssh "$PI" "$COMPOSE up -d --build --wait" >/dev/null
+for port in 8081 8082 9090; do  # the tailnet ACL must allow these from the load generator
+  curl -s -o /dev/null -m 5 "http://$HOST:$port/" ||
+    { echo "cannot reach $HOST:$port: allow tcp:8081,8082,9090 to tag:pi in the tailnet policy (see benchmarks/README.md)"; exit 1; }
+done
 
 run() { # tag, name, hey args...
   local tag=$1; echo -e "\n=== $2 ===" | tee -a "$OUT"; shift 2
@@ -29,11 +33,14 @@ overhead() { # concurrency -> relay minus direct (ms) and relay/direct throughpu
     /Requests\/sec/ { rps[FILENAME] = $2 }
     /^ +50%/        { p50[FILENAME] = $3 }   # hey prints "  50%% in 0.0286 secs"
     /^ +95%/        { p95[FILENAME] = $3 }
+    /Error distribution/ { err[FILENAME] = 1 }
     END {
       d = ARGV[1]; r = ARGV[2]
-      if (rps[d] <= 0 || rps[r] <= 0) { printf "c=%s: n/a (missing hey output)\n", c; exit }
-      printf "c=%s: delta p50 %+.1f ms | delta p95 %+.1f ms | throughput ratio %.2f\n",
-        c, (p50[r] - p50[d]) * 1000, (p95[r] - p95[d]) * 1000, rps[r] / rps[d]
+      # hey counts failed requests in req/s, so require latencies (only printed for responses) on both sides.
+      if (p50[d] == "" || p50[r] == "") { printf "c=%s: n/a (no successful responses)\n", c; exit }
+      printf "c=%s: delta p50 %+.1f ms | delta p95 %+.1f ms | throughput ratio %.2f%s\n",
+        c, (p50[r] - p50[d]) * 1000, (p95[r] - p95[d]) * 1000, rps[r] / rps[d],
+        (err[d] || err[r]) ? "  (WARNING: errors in this run, see above)" : ""
     }' "$RAW/direct-c$1" "$RAW/relay-c$1"
 }
 
