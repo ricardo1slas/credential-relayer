@@ -28,13 +28,14 @@ What is compared: the relay scenarios send `POST /api/v1/relay` with
 `{"target":"mock","method":"GET","path":"/"}`; the relayer then does `GET /` on the mock over
 the compose network. The direct scenarios do that same `GET /` straight to the mock's published
 port (:8082), over the same tailnet path. So the delta is everything the relayer adds: auth,
-the (in-memory) rate-limit check, request/response handling, and the extra upstream hop.
+the rate-limit check (a Redis round trip since v1.1.0), request/response handling, and the extra
+upstream hop.
 
 ## Method / caveats
 - Load comes from a Mac over Tailscale, so latency includes the tailnet hop (WireGuard) and
   the Mac's own limits. Compare relay vs. baseline rather than reading absolutes.
-- `config.bench.yaml` disables the rate limit and relaxes SSRF guards (http + private IP)
-  for the `mock` target only. Never use it outside this stack.
+- `config.bench.yaml` sets the rate limit too high to trigger (it is still checked on every
+  request) and relaxes SSRF guards (http + private IP) for the `mock` target only. Never use it outside this stack.
 - Metrics + pprof are enabled in the bench stack (:9090) so profiles can be captured; overhead is small but nonzero.
 - Results are one 20s run per scenario on a Raspberry Pi 4 (4 cores); expect run-to-run noise.
 
@@ -52,13 +53,15 @@ No direct c=200 baseline was measured in that run.
 
 | Concurrency | delta p50 | delta p95 | throughput ratio |
 |---|---|---|---|
-| c=50 (derived) | +17.3 ms | +50.2 ms | 0.60 |
 | c=50 | TODO(<pi-user>): fill after make bench on the Pi | TODO(<pi-user>) | TODO(<pi-user>) |
 | c=200 | TODO(<pi-user>): fill after make bench on the Pi | TODO(<pi-user>) | TODO(<pi-user>) |
 
-The "derived" row is computed by hand from `results/2026-09-24_2031_6e7edc7.txt`, the old
-single-baseline run (mock direct c=50 vs relay c=50, same run, 20s each). Replace both TODO
-rows with the `relayer overhead` block from the next `make bench` results file.
+Fill both rows from the `relayer overhead` block of the next `make bench` results file.
+
+> **Not comparable across v1.1.0.** From v1.1.0 the rate limiter defaults to Redis, so every relay
+> request makes one Redis round trip (the bench config doesn't set `rate_limit.backend`, so it
+> measures that default). The 2026-09-24 numbers above predate it and used the in-memory limiter;
+> compare new results only with other v1.1.0+ runs.
 
 ### Optimisation log: connection reuse (found via pprof)
 
