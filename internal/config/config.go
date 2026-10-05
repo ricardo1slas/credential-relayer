@@ -99,14 +99,8 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("loading config file: %w", err)
 	}
 
-	// Override with environment variables.
-	// RELAYER_SERVER_PORT -> server.port
-	if err := k.Load(env.Provider("RELAYER_", ".", func(s string) string {
-		return strings.ReplaceAll(
-			strings.ToLower(strings.TrimPrefix(s, "RELAYER_")),
-			"_", ".",
-		)
-	}), nil); err != nil {
+	// Override with environment variables (see envKey).
+	if err := k.Load(env.Provider("RELAYER_", ".", envKey), nil); err != nil {
 		return nil, fmt.Errorf("loading env config: %w", err)
 	}
 
@@ -117,6 +111,18 @@ func Load(path string) (*Config, error) {
 
 	setDefaults(&cfg)
 	return &cfg, nil
+}
+
+// envKey maps an env var name to a config path. "__" separates levels, so keys that contain
+// an underscore are reachable: RELAYER_RATE_LIMIT__FAIL_OPEN -> rate_limit.fail_open.
+// Names without "__" keep the original form, where every "_" separates levels
+// (RELAYER_SERVER_PORT -> server.port); that only works when no key on the path has an underscore.
+func envKey(s string) string {
+	s = strings.ToLower(strings.TrimPrefix(s, "RELAYER_"))
+	if strings.Contains(s, "__") {
+		return strings.ReplaceAll(s, "__", ".")
+	}
+	return strings.ReplaceAll(s, "_", ".")
 }
 
 func setDefaults(cfg *Config) {

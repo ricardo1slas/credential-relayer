@@ -52,3 +52,40 @@ func TestRateLimitDefaults(t *testing.T) {
 		t.Fatalf("rate_limit defaults = %+v, want redis, fail-closed, 100/1m", rl)
 	}
 }
+
+func TestEnvOverrides(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("server:\n  port: 8080\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		env, val string
+		got      func(*Config) any
+		want     any
+	}{
+		// "__" separates levels, so keys with underscores are reachable.
+		{"RELAYER_RATE_LIMIT__FAIL_OPEN", "true", func(c *Config) any { return c.RateLimit.FailOpen }, true},
+		{"RELAYER_RATE_LIMIT__BACKEND", "memory", func(c *Config) any { return c.RateLimit.Backend }, "memory"},
+		{"RELAYER_RELAY__MAX_REQUEST_BYTES", "123", func(c *Config) any { return c.Relay.MaxRequestBytes }, int64(123)},
+		{"RELAYER_QUEUE__COMPLETED_TTL", "5m", func(c *Config) any { return c.Queue.CompletedTTL }, 5 * time.Minute},
+		{"RELAYER_QUEUE__REDIS__TLS", "true", func(c *Config) any { return c.Queue.Redis.TLS }, true},
+		{"RELAYER_SERVER__PORT", "9001", func(c *Config) any { return c.Server.Port }, 9001},
+		// Without "__", every "_" separates levels: keys without underscores keep working.
+		{"RELAYER_SERVER_PORT", "9002", func(c *Config) any { return c.Server.Port }, 9002},
+		{"RELAYER_QUEUE_REDIS_ADDR", "redis:6379", func(c *Config) any { return c.Queue.Redis.Addr }, "redis:6379"},
+		// ...and can't reach a key with an underscore (rate.limit.fail.open), so the default stays.
+		{"RELAYER_RATE_LIMIT_FAIL_OPEN", "true", func(c *Config) any { return c.RateLimit.FailOpen }, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.env, func(t *testing.T) {
+			t.Setenv(tt.env, tt.val)
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := tt.got(cfg); got != tt.want {
+				t.Fatalf("%s=%s: got %v (%T), want %v (%T)", tt.env, tt.val, got, got, tt.want, tt.want)
+			}
+		})
+	}
+}
