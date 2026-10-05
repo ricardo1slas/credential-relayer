@@ -54,15 +54,25 @@ jobs:
       - name: go test
         # Queue tests read TEST_REDIS_ADDR, falling back to localhost:6379
         # which is where the service container is mapped.
-        shell: bash # -o pipefail, so a test failure still fails through tee
-        run: go test -race -count=1 -timeout=3m -coverprofile=coverage.out -covermode=atomic ./... | tee test.out
+        # -coverpkg credits every package with coverage from any test, so internal/api
+        # counts what test/e2e exercises through the real router.
+        run: go test -race -count=1 -timeout=3m -coverprofile=coverage.out -covermode=atomic -coverpkg=./... ./...
       - name: coverage summary
+        # Per package from the merged profile; go test's own per-package lines are relative
+        # to all of ./... under -coverpkg. Blocks can repeat across test binaries: counted once.
         run: |
           {
             echo "### Coverage: $(go tool cover -func=coverage.out | awk '/^total:/ {print $NF}')"
             echo '| package | coverage |'
             echo '|---|---|'
-            sed -nE 's/^(ok)?[[:space:]]+([^[:space:]]+).*coverage: ([0-9.]+%).*/| \2 | \3 |/p' test.out
+            awk 'NR > 1 {
+              p = $1; sub(/\/[^\/]*:.*/, "", p); sub(/^github.com\/ricardo1slas\/credential-relayer\//, "", p)
+              n[$1] = $2; pkg[$1] = p; if ($3 > 0) hit[$1] = 1
+            }
+            END {
+              for (b in n) { t[pkg[b]] += n[b]; if (b in hit) c[pkg[b]] += n[b] }
+              for (p in t) printf "| %s | %.1f%% |\n", p, 100 * c[p] / t[p]
+            }' coverage.out | sort
           } >> "$GITHUB_STEP_SUMMARY"
 
   build:

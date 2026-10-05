@@ -28,7 +28,7 @@ test-e2e:
 	go test ./test/e2e/... -v
 
 cover:
-	go test ./... -coverprofile=coverage.out
+	go test ./... -coverpkg=./... -coverprofile=coverage.out
 	go tool cover -func=coverage.out | tail -1
 
 lint:
