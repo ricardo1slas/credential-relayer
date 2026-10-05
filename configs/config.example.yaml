@@ -1,3 +1,8 @@
+# Every option can be overridden with a RELAYER_* env var, "__" between levels:
+#   RELAYER_RATE_LIMIT__FAIL_OPEN=true -> rate_limit.fail_open
+#   RELAYER_SERVER_PORT=8081 -> server.port (single "_" works only when no key on the path has one)
+# Lists (auth.api_keys, relay.targets) can only be set here.
+
 server:
   port: 8080
   read_timeout: 10s

@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- `RELAYER_*` env overrides can reach keys that contain an underscore, using `__` as the level separator
+  (`RELAYER_RATE_LIMIT__FAIL_OPEN` -> `rate_limit.fail_open`). Previously every `_` split a level, so
+  those keys could only be set in YAML.
 - **Rate limits now hold across instances.** The limiter was an in-memory map per process, so the
   reference AWS deployment (2 ECS tasks behind an ALB) allowed each key twice its configured limit. The
   default backend is now a Redis token bucket (atomic Lua script, Redis `TIME` as the shared clock, idle
@@ -38,6 +41,12 @@
 
 ### Upgrading
 
+- `RELAYER_*` env overrides: use `__` between levels for any key that contains an underscore
+  (`RELAYER_RATE_LIMIT__FAIL_OPEN`, `RELAYER_RELAY__MAX_REQUEST_BYTES`, `RELAYER_QUEUE__COMPLETED_TTL`).
+  The single-`_` form mapped those to the wrong key (`RELAYER_RATE_LIMIT_REQUESTS` -> `rate.limit.requests`),
+  so they were silently ignored; if you set one expecting it to work, it now must be renamed, and the new
+  name *will* take effect, so check the value before deploying. Single-`_` names for keys without
+  underscores (`RELAYER_SERVER_PORT`, `RELAYER_QUEUE_REDIS_ADDR`, `RELAYER_QUEUE_REDIS_TLS`) behave as before.
 - Pi: make sure `GRAFANA_PASSWORD` is set in `~/relayer/infra/docker/.env`. If the Grafana volume already
   exists, the password there won't change by itself; see `docs/pi-deploy.md` for the reset command.
 - Multi-instance deployments get the Redis backend with no config change. Single-instance deployments that

@@ -229,8 +229,10 @@ curl localhost:8080/api/v1/jobs/<job_id> -H "X-API-Key: <your-api-key>"
 
 ### Configuration
 
-`configs/config.yaml` plus `RELAYER_*` environment overrides (`RELAYER_SERVER_PORT` -> `server.port`; every
-`_` becomes a `.`, so keys that contain an underscore, such as `rate_limit.fail_open`, can only be set in YAML).
+`configs/config.yaml` plus `RELAYER_*` environment overrides. Use `__` between levels:
+`RELAYER_RATE_LIMIT__FAIL_OPEN=true` -> `rate_limit.fail_open`. Names without `__` keep the older form, where every
+`_` is a level (`RELAYER_SERVER_PORT` -> `server.port`), which only reaches keys without underscores. Lists
+(`auth.api_keys`, `relay.targets`) can't be overridden element by element; set them in YAML.
 The annotated [`configs/config.example.yaml`](configs/config.example.yaml) lists every option.
 
 ```yaml
