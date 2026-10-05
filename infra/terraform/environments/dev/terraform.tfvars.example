@@ -10,7 +10,8 @@ image = "123456789012.dkr.ecr.us-east-1.amazonaws.com/relayer:latest"
 alb_allowed_cidrs = ["0.0.0.0/0"]
 
 # Map of container env var -> SSM Parameter / Secrets Manager ARN.
-# Example: API key delivered via SSM SecureString.
+# Example: an upstream secret (named in a target's secret_headers) delivered via SSM SecureString.
+# Relayer keys can't be set this way: env overrides don't reach list entries (auth.api_keys).
 # secrets = {
-#   RELAYER_AUTH_API_KEYS_0_KEY = "arn:aws:ssm:us-east-1:123456789012:parameter/relayer/dev/api-key"
+#   GEMINI_API_KEY = "arn:aws:ssm:us-east-1:123456789012:parameter/relayer/dev/gemini-api-key"
 # }

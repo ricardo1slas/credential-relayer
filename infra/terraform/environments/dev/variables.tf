@@ -56,7 +56,7 @@ variable "certificate_arn" {
 }
 
 variable "secrets" {
-  description = "Env var -> SSM/Secrets ARN map (e.g. RELAYER_AUTH_API_KEYS_0_KEY)"
+  description = "Env var -> SSM/Secrets ARN map (e.g. GEMINI_API_KEY for a target's secret_headers)"
   type        = map(string)
   default     = {}
 }

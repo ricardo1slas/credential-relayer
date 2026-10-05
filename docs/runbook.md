@@ -3,6 +3,10 @@
 Operational reference for deploying, observing, and troubleshooting the relayer.
 Audience: whoever is on call.
 
+> **Scope.** Sections 1-5 describe the **AWS reference deployment** (`infra/terraform`). It is not running
+> today: the live deployment is the Raspberry Pi ([`pi-deploy.md`](pi-deploy.md)), and `deploy-aws.yml` is a
+> manual, dev-only workflow. Sections 6-7 apply to both.
+
 ---
 
 ## 1. Service at a glance
@@ -26,11 +30,13 @@ Health endpoints:
 
 ## 2. Deploy
 
-### Automated (normal path)
+### Workflow (manual, dev only)
 1. Merge to `main`. CI (`.github/workflows/ci.yml`) runs lint + tests + build.
-2. `deploy.yml` builds the image, pushes to ECR, and updates the ECS service
-   (rolling update, min healthy 50% / max 200%). Dev deploys automatically;
-   **prod requires manual approval** via the GitHub `prod` environment.
+   On `main`, `deploy.yml` then deploys to the **Pi**, not AWS.
+2. Run `deploy-aws.yml` by hand (`workflow_dispatch`): it builds the image, pushes
+   to ECR, and updates the **dev** ECS service (rolling update, min healthy 50% /
+   max 200%). Prod has no deploy workflow (build log §12.6); prod changes go
+   through Terraform below.
 3. The rollout is gated by the ALB target-group health check on `/health`.
 
 ### Manual deploy / infra change
@@ -79,9 +85,10 @@ need to stop the bleeding *now*.
 ### Dashboards
 - **CloudWatch dashboard** `<name>-overview`: ALB request/error counts, target
   latency p50/p95/p99, ECS CPU/memory, healthy/unhealthy host counts.
-- **Grafana** (local stack or self-hosted): app-level Prometheus metrics —
-  `make docker-up` then http://localhost:3000 (admin/admin). Dashboard "Private
-  Relayer" is auto-provisioned.
+- **Grafana** (local stack or the Pi): app-level Prometheus metrics —
+  `make docker-up` then http://localhost:3000 (admin/admin, dev only). Dashboards
+  "Credential Relayer", "Security & usage", "LLM & upstreams" and "Pi host" are
+  auto-provisioned.
 
 ### Key application metrics (Prometheus, `/metrics` on :9090)
 | Metric | Meaning |
@@ -112,7 +119,7 @@ All alarms publish to the `<name>-alarms` SNS topic.
 | `alb-target-5xx` | App returning 5xx, or upstream targets failing | Check logs for stack traces / relay errors; check `relayer_relay_errors_total`; is a target down? |
 | `alb-target-latency` | Slow upstreams, CPU saturation, Redis slowness | Check ECS CPU alarm + target latency panel; inspect slow targets |
 | `alb-unhealthy-hosts` | Tasks failing `/health`, crash loop, bad deploy | Check ECS task events + logs; consider rollback (§3) |
-| `ecs-cpu-high` / `ecs-memory-high` | Under-provisioned or load spike | Confirm auto-scaling kicked in; raise desired count / task size |
+| `ecs-cpu-high` / `ecs-memory-high` | Under-provisioned or load spike | No auto-scaling is configured: `aws ecs update-service --desired-count N` (Terraform ignores `desired_count` after create); task size via Terraform |
 | `error-log-rate` | Spike in error-level logs | Tail logs, group by error message, identify the failing path |
 
 ### Dead-letter queue growing
@@ -129,13 +136,19 @@ re-enqueue by `LPUSH`-ing the IDs back onto `relayer:jobs:pending`.
 
 ## 6. Common scenarios
 
-**Redis down** — `/ready` returns 503, the readiness check pulls tasks out of
-rotation, webhooks/jobs fail (synchronous relay still works). Check ElastiCache
-health and the ECS↔Redis security group. The relayer reconnects automatically.
+**Redis down** — `/ready` returns 503 and webhooks/jobs fail. With the default
+`rate_limit.backend: redis` and `fail_open: false`, every `/api/v1` request also
+returns `503 rate limiter unavailable` (watch
+`relayer_ratelimit_backend_errors_total`); set `rate_limit.fail_open: true` to keep
+`/relay` and `/proxy` serving during an outage. Check Redis health (ElastiCache and
+the ECS↔Redis security group, or the `redis` container on the Pi). The relayer
+reconnects automatically.
 
 **Rate-limit false positives (429s)** — limits are per API-key (`rate_limit` in
-config). Raise `requests`/`window` or issue the client its own key. State is in
-Redis, so it is shared across tasks.
+config). Raise `requests`/`window` or issue the client its own key. With
+`rate_limit.backend: redis` (default) state is in Redis and shared across tasks;
+with `memory` each task has its own budget, so the effective limit is
+limit × task count.
 
 **SSRF / blocked relay** — by design the relay refuses targets resolving to
 private IPs and non-http(s) schemes. If a *legitimate* internal target is
@@ -143,7 +156,7 @@ blocked, set `allow_private_ips: true` (and `allow_http` if needed) on that
 specific target — never globally.
 
 **Load test** — `make loadtest URL=<alb-url> API_KEY=<key>` (uses `hey`/`k6` if
-installed). Watch the CPU alarm and confirm auto-scaling adds tasks.
+installed). Watch the CPU alarm; there is no auto-scaling, so capacity is `desired_count`.
 
 ---
 
