@@ -13,6 +13,9 @@
   buckets expire after one window), so every instance spends from one budget per key.
 - `make deploy-pi` refuses to deploy while Grafana would get the default `admin` password (unset, empty or
   `admin`), and fails closed if the value can't be resolved.
+- Builds with Go 1.27.2 and requires Go 1.26.9 or later, picking up the standard library fixes for
+  `net/http`, `net/textproto` and `crypto/tls` (GO-2026-6603 to GO-2026-6617, CVE-2026-78667,
+  CVE-2026-97031).
 
 ### Added
 

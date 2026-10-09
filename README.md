@@ -21,13 +21,8 @@ relayer. Streaming proxy, Redis queue, shared rate limits, Prometheus/Grafana, P
 |---|---|
 | **3.7x throughput from one profile** | `pprof` showed ~80% of CPU in TCP dials: a timeout context cancelled before the body was read made `net/http` drop every connection. Fixed: 282 -> 1048 req/s at 200 concurrent, p95 1.95 s -> 0.41 s ([details](#performance)). |
 | **Fuzzing found a header bypass** | `FuzzHeaderFilter` found that `X_Real_IP` / `Transfer_Encoding`-style names slipped past the header deny-list, and backends that fold `_` to `-` would read them as the denied header. Names are now folded before the check; the path policy was fuzzed over 4.4M inputs. |
-| **Relayer overhead** | TODO(<pi-user>): delta p50 / p95 and throughput ratio vs. direct-to-upstream, from `make bench` on the Pi ([method](benchmarks/README.md)). |
 
-<!-- TODO(<pi-user>): capture docs/img/grafana-dashboard.png (Security & usage or Credential Relayer dashboard) -->
 ![Grafana dashboard](docs/img/grafana-dashboard.png)
-
-<!-- TODO(<pi-user>): capture docs/img/gemini-cli-demo.gif (Gemini CLI through the Pi, see "Demo" below) -->
-![Gemini CLI through the relayer](docs/img/gemini-cli-demo.gif)
 
 ## What it is
 
@@ -171,7 +166,6 @@ Measured on a **Raspberry Pi 4** (4 cores) against a local upstream, load genera
 |---|---|---|---|
 | Relay, 50 concurrent | 976 | 46 ms | 98 ms |
 | Relay, 200 concurrent | 1048 | 168 ms | 409 ms |
-| Overhead vs. direct to upstream | TODO(<pi-user>) | TODO(<pi-user>) | TODO(<pi-user>) |
 
 A CPU profile (`pprof`) showed ~80% of time spent dialing new TCP connections: the per-request timeout
 context was cancelled before the response body was read, so `net/http` discarded every connection.
