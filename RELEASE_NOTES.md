@@ -1,6 +1,6 @@
 # Release notes
 
-## v1.1.0 (unreleased)
+## v1.1.0 (2026-10-09)
 
 ### Fixed
 
