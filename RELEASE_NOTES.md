@@ -1,5 +1,15 @@
 # Release notes
 
+## Unreleased
+
+### Fixed
+
+- **Webhook jobs no longer vanish when a worker stops mid-job.** Workers took jobs with `BRPOP`, so a crash,
+  `kill -9` or a deploy between taking a job and finishing it lost the job (or left it stuck in
+  `processing`). Jobs now move atomically into a `relayer:jobs:processing` list (`BLMOVE`) and leave it only
+  when completed, requeued or dead-lettered. A reaper on every instance requeues claims older than the slowest
+  target's full timeout plus `retry_delay` and a minute. Delivery is at-least-once.
+
 ## v1.1.0 (2026-10-09)
 
 ### Fixed

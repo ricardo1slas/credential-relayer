@@ -68,8 +68,9 @@ flowchart LR
 - **Three ways in**, all behind the same gate:
   - `POST /api/v1/relay`: synchronous JSON envelope, retries on 5xx and transport errors (never 4xx) with
     exponential backoff and jitter.
-  - `POST /api/v1/webhook`: returns `202` with a job ID; a worker pool delivers it with retries and a
-    dead-letter state; `GET /api/v1/jobs/{id}` reports status (a key only sees its own jobs).
+  - `POST /api/v1/webhook`: returns `202` with a job ID; a worker pool delivers it at least once, with
+    retries and a dead-letter state. A job held by a worker that crashes or is stopped goes back on the
+    queue; `GET /api/v1/jobs/{id}` reports status (a key only sees its own jobs).
   - `/api/v1/proxy/{target}/...`: a transparent passthrough that streams responses (SSE) as they arrive, so
     SDKs work unchanged by pointing their base URL at the relayer.
 - **Auth**: keys stored as SHA-256 hashes, optional expiry, overlapping keys for rotation.
@@ -146,6 +147,10 @@ watching them fail). Report vulnerabilities privately: see [`SECURITY.md`](SECUR
   manager; only the env implementation exists.
 - **Keys are managed in YAML plus a redeploy.** There is no admin API and no hot reload: adding, revoking or
   rotating a relayer key is a config edit and `make deploy-pi`.
+- **Webhook delivery is at-least-once, not exactly-once.** A worker that dies after the upstream accepted a
+  job but before marking it done leaves it to be requeued (after the slowest target's full timeout plus
+  `retry_delay` and a minute), so the upstream can see it twice. Targets should treat webhooks as
+  idempotent; jobs carry no idempotency key yet.
 - **Logs are not a durable audit trail.** Structured logs name the key behind each call, but they go to
   stdout/Docker with no tamper evidence or guaranteed retention.
 - **Single region.** The Pi is one host with one Redis; the AWS reference is one region (prod ElastiCache has

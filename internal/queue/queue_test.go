@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -194,5 +195,111 @@ func TestRequeue(t *testing.T) {
 	fetched, _ := q.GetJob(ctx, job.ID)
 	if fetched.Status != StatusQueued {
 		t.Errorf("expected 'queued' after requeue, got %q", fetched.Status)
+	}
+}
+
+// A worker that dies after Dequeue (crash, kill -9, deploy mid-job) never finishes the job. It
+// must stay claimed while fresh and go back to pending once stale, not vanish.
+func TestCrashedWorkerJobIsReaped(t *testing.T) {
+	client := testRedisClient(t)
+	q := NewQueue(client, Config{}, zerolog.Nop())
+	ctx := context.Background()
+
+	job, _ := q.Enqueue(ctx, "svc", "POST", "/", nil, []byte(`{}`), 3)
+	if _, err := q.Dequeue(ctx, 2*time.Second); err != nil {
+		t.Fatalf("dequeue: %v", err)
+	}
+	// ...worker dies here.
+
+	if n, _ := q.ReapStale(ctx, time.Hour); n != 0 {
+		t.Fatalf("reaped a fresh claim: %d", n)
+	}
+	if got := client.LLen(ctx, processingKey).Val(); got != 1 {
+		t.Fatalf("expected the job held in processing, got %d", got)
+	}
+
+	// Two instances reaping at once must requeue it exactly once.
+	done := make(chan int, 2)
+	for range 2 {
+		go func() { n, _ := q.ReapStale(ctx, 0); done <- n }()
+	}
+	if total := <-done + <-done; total != 1 {
+		t.Fatalf("expected 1 requeue across both reapers, got %d", total)
+	}
+	if d, _ := q.Depth(ctx); d != 1 {
+		t.Fatalf("expected the job back in pending, depth %d", d)
+	}
+	if client.LLen(ctx, processingKey).Val() != 0 || client.ZCard(ctx, claimsKey).Val() != 0 {
+		t.Fatal("claim not released")
+	}
+
+	again, err := q.Dequeue(ctx, 2*time.Second)
+	if err != nil || again.ID != job.ID {
+		t.Fatalf("expected to redeliver %s, got %v, %v", job.ID, again, err)
+	}
+}
+
+// Died between BLMOVE and recording the claim time: the reaper starts the clock instead of
+// reaping (a live worker in that window would otherwise lose its job to a duplicate).
+func TestUnstampedClaimGetsClockNotReaped(t *testing.T) {
+	client := testRedisClient(t)
+	q := NewQueue(client, Config{}, zerolog.Nop())
+	ctx := context.Background()
+
+	job, _ := q.Enqueue(ctx, "svc", "POST", "/", nil, nil, 3)
+	client.LMove(ctx, queueKey, processingKey, "RIGHT", "LEFT")
+
+	if n, _ := q.ReapStale(ctx, 0); n != 0 {
+		t.Fatalf("reaped an unstamped claim on first sight: %d", n)
+	}
+	if client.ZScore(ctx, claimsKey, job.ID).Err() != nil {
+		t.Fatal("expected the reaper to stamp the claim")
+	}
+	if n, _ := q.ReapStale(ctx, 0); n != 1 {
+		t.Fatalf("expected the stamped claim reaped on the next pass, got %d", n)
+	}
+}
+
+func TestFinishingReleasesClaim(t *testing.T) {
+	client := testRedisClient(t)
+	q := NewQueue(client, Config{}, zerolog.Nop())
+	ctx := context.Background()
+
+	finishers := map[string]func(*Job) error{
+		"completed": func(j *Job) error { return q.MarkCompleted(ctx, j, 200) },
+		"requeued":  func(j *Job) error { return q.Requeue(ctx, j) },
+		"dead":      func(j *Job) error { return q.SendToDeadLetter(ctx, j) },
+	}
+	for name, finish := range finishers {
+		_, _ = q.Enqueue(ctx, "svc", "POST", "/", nil, nil, 3)
+		job, err := q.Dequeue(ctx, 2*time.Second)
+		if err != nil {
+			t.Fatalf("%s: dequeue: %v", name, err)
+		}
+		if err := finish(job); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if client.LLen(ctx, processingKey).Val() != 0 || client.ZCard(ctx, claimsKey).Val() != 0 {
+			t.Fatalf("%s: claim not released", name)
+		}
+		client.Del(ctx, queueKey) // the requeued case pushed it back
+	}
+}
+
+// A job whose record expired while queued can't be delivered; Dequeue drops its claim rather
+// than leaving it for the reaper to requeue forever.
+func TestDequeueDropsClaimOfExpiredJob(t *testing.T) {
+	client := testRedisClient(t)
+	q := NewQueue(client, Config{}, zerolog.Nop())
+	ctx := context.Background()
+
+	job, _ := q.Enqueue(ctx, "svc", "POST", "/", nil, nil, 3)
+	client.Del(ctx, jobPrefix+job.ID)
+
+	if _, err := q.Dequeue(ctx, 2*time.Second); !errors.Is(err, ErrJobNotFound) {
+		t.Fatalf("expected ErrJobNotFound, got %v", err)
+	}
+	if client.LLen(ctx, processingKey).Val() != 0 || client.ZCard(ctx, claimsKey).Val() != 0 {
+		t.Fatal("claim of a missing job not dropped")
 	}
 }

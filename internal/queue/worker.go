@@ -14,6 +14,9 @@ type WorkerPoolConfig struct {
 	Workers    int
 	RetryDelay time.Duration
 	MaxRetries int
+	// ReapAfter is how long a job may stay claimed before it is presumed abandoned (worker crash
+	// or shutdown) and requeued. It must exceed the longest delivery plus RetryDelay.
+	ReapAfter time.Duration
 }
 
 type WorkerPool struct {
@@ -30,6 +33,9 @@ func NewWorkerPool(q *Queue, handler *relay.Handler, cfg WorkerPoolConfig, logge
 	}
 	if cfg.RetryDelay == 0 {
 		cfg.RetryDelay = 30 * time.Second
+	}
+	if cfg.ReapAfter == 0 {
+		cfg.ReapAfter = cfg.RetryDelay + 5*time.Minute
 	}
 	return &WorkerPool{
 		queue:   q,
@@ -54,6 +60,7 @@ func (wp *WorkerPool) Start(ctx context.Context) {
 	for i := 0; i < wp.cfg.Workers; i++ {
 		go wp.worker(ctx, i)
 	}
+	go wp.reaper(ctx)
 
 	<-ctx.Done()
 	wp.logger.Info().Msg("worker pool shutting down")
@@ -73,11 +80,31 @@ func (wp *WorkerPool) worker(ctx context.Context, id int) {
 
 		job, err := wp.queue.Dequeue(ctx, 5*time.Second)
 		if err != nil {
-			// BRPop timeout or context cancelled -- just loop.
+			// BLMove timeout or context cancelled -- just loop.
 			continue
 		}
 
 		wp.processJob(ctx, job, logger)
+	}
+}
+
+// reaper requeues jobs left claimed by a crashed or stopped worker, from any instance.
+func (wp *WorkerPool) reaper(ctx context.Context) {
+	tick := time.NewTicker(wp.cfg.ReapAfter / 4)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		n, err := wp.queue.ReapStale(ctx, wp.cfg.ReapAfter)
+		if err != nil {
+			wp.logger.Warn().Err(err).Msg("reaping abandoned jobs")
+		}
+		if n > 0 {
+			wp.logger.Warn().Int("jobs", n).Msg("requeued jobs abandoned by a worker")
+		}
 	}
 }
 

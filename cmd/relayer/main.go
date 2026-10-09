@@ -132,9 +132,16 @@ func main() {
 	}, logger)
 	relayHandler.SetMetrics(m)
 
+	// A job claimed longer than its slowest possible delivery (every attempt timing out) plus the
+	// retry wait belongs to a dead worker; the minute covers backoff between attempts.
+	var slowest time.Duration
+	for _, t := range registry.List() {
+		slowest = max(slowest, time.Duration(t.Retries+1)*t.Timeout)
+	}
 	workerCfg := queue.WorkerPoolConfig{
 		Workers:    cfg.Queue.Workers,
 		RetryDelay: cfg.Queue.RetryDelay,
+		ReapAfter:  slowest + cfg.Queue.RetryDelay + time.Minute,
 	}
 	workerPool := queue.NewWorkerPool(jobQueue, relayHandler, workerCfg, logger)
 	workerPool.SetMetrics(m)
