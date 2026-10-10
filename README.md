@@ -151,6 +151,8 @@ watching them fail). Report vulnerabilities privately: see [`SECURITY.md`](SECUR
   job but before marking it done leaves it to be requeued (after the slowest target's full timeout plus
   `retry_delay` and a minute), so the upstream can see it twice. Targets should treat webhooks as
   idempotent; jobs carry no idempotency key yet.
+  A worker stalled past that recovery limit (GC pause, network partition, an overloaded host) can still
+  overwrite the status of its job's redelivered attempt; fixed in the next release.
 - **Logs are not a durable audit trail.** Structured logs name the key behind each call, but they go to
   stdout/Docker with no tamper evidence or guaranteed retention.
 - **Single region.** The Pi is one host with one Redis; the AWS reference is one region (prod ElastiCache has
