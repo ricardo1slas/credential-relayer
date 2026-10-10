@@ -1,14 +1,24 @@
 # Release notes
 
-## Unreleased
+## v1.2.0 (2026-10-09)
 
-### Fixed
+### Changed
 
-- **Webhook jobs no longer vanish when a worker stops mid-job.** Workers took jobs with `BRPOP`, so a crash,
-  `kill -9` or a deploy between taking a job and finishing it lost the job (or left it stuck in
-  `processing`). Jobs now move atomically into a `relayer:jobs:processing` list (`BLMOVE`) and leave it only
-  when completed, requeued or dead-lettered. A reaper on every instance requeues claims older than the slowest
-  target's full timeout plus `retry_delay` and a minute. Delivery is at-least-once.
+- **Webhook delivery is now at-least-once (behavior change).** Earlier releases called webhooks durable, but
+  workers took jobs with `BRPOP`, so a crash, `kill -9` or a deploy between taking a job and finishing it
+  lost the job (or left it stuck in `processing`). Jobs now move atomically into a
+  `relayer:jobs:processing` list (`BLMOVE`) and leave it only when completed, requeued or dead-lettered. A
+  reaper on every instance requeues claims older than the slowest target's full timeout plus `retry_delay`
+  and a minute. The trade-off: a worker that dies after the upstream accepted a job but before marking it
+  done gets it redelivered, so the upstream can see it twice.
+
+### Upgrading
+
+- **Webhook targets must tolerate duplicate deliveries** (dedupe on the job ID or make the handler
+  idempotent). Jobs carry no idempotency key yet.
+- Jobs a v1.1.0 worker is processing at the moment of the upgrade use the old path and can still be lost
+  once; upgrade while the queue is idle if that matters.
+- No config change. New Redis keys: `relayer:jobs:processing` (list) and `relayer:jobs:claims` (zset).
 
 ## v1.1.0 (2026-10-09)
 
